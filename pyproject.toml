@@ -7,8 +7,8 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 gui = ["PySide6"]           # the desktop app
-server = ["sounddevice"]    # the terminal server (--headless); also needs the PortAudio library, e.g. apt install libportaudio2
-all = ["PySide6", "sounddevice"]
+server = ["sounddevice; sys_platform == 'linux'"]    # the terminal server (--headless, Linux only); also needs the PortAudio library, e.g. apt install libportaudio2
+all = ["PySide6", "sounddevice; sys_platform == 'linux'"]
 dev = ["pytest"]
 
 [project.scripts]

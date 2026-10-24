@@ -74,3 +74,17 @@ def test_setup_gateways(monkeypatch, tmp_path):
 
 def test_reset_login_flag():
     assert cli.parse(["--headless", "--reset-login"]).reset_login and not cli.parse(["--headless"]).reset_login
+
+
+@pytest.mark.parametrize("flag", ["--headless", "--list-devices"])
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_the_server_is_linux_only(monkeypatch, flag, platform):
+    monkeypatch.setattr(cli.sys, "platform", platform)
+    with pytest.raises(SystemExit) as e:
+        cli.main([flag])
+    assert "only runs on Linux" in str(e.value)
+
+
+def test_selftest_finds_the_packaged_pieces():
+    pytest.importorskip("PySide6.QtWebEngineWidgets")
+    assert cli.selftest() == 0

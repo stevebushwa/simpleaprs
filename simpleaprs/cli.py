@@ -16,6 +16,7 @@ unless --save is given.
 def parse(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="simpleaprs", description="APRS with a built-in sound-card modem.",
                                  epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)  # for the build: can this install start at all?
     ap.add_argument("--headless", "--server", action="store_true", help="run in the terminal as a network server, no window")
     ap.add_argument("--setup", action="store_true", help="(headless) answer the setup questions in the terminal (the web page's Settings does the same)")
     ap.add_argument("--reset-login", action="store_true", help="(headless) forget the web page's login: the next visitor creates a new one")
@@ -98,8 +99,31 @@ def headless(args: argparse.Namespace) -> int:
     return hl.run(cfg, args.quiet, tuple(args.allow_host))
 
 
+SERVER_ONLY_LINUX = ("The terminal server (--headless, --list-devices) only runs on Linux, which is where a Raspberry Pi or other\n"
+                     "single-board computer lives. On this system use the desktop app, and point it at the server\n"
+                     "(Settings > Network > Connect to another simpleaprs).")
+
+
+def selftest() -> int:
+    """Used by the build to check a packaged app: the Qt parts and the web files it needs are all in there."""
+    from pathlib import Path
+
+    from . import app  # noqa: F401  (imports Qt, Qt WebEngine and Qt Multimedia)
+    from .mapserver import WEB
+    for name in ("app.html", "login.html", "map.js", "maplibre-gl.js", "pmtiles.js"):
+        if not (WEB / name).is_file():
+            print(f"missing {Path(WEB / name)}", file=sys.stderr)
+            return 1
+    print("simpleaprs selftest ok")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse(argv)
+    if args.selftest:
+        sys.exit(selftest())
+    if (args.headless or args.list_devices) and not sys.platform.startswith("linux"):
+        sys.exit(SERVER_ONLY_LINUX)
     if args.list_devices:
         from .soundio import device_names
         print("Inputs:\n  " + "\n  ".join(device_names(True) or ["(none)"]))
