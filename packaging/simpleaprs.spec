@@ -12,7 +12,8 @@ from PyInstaller.utils.hooks import collect_data_files
 
 mac = sys.platform == "darwin"
 icons = os.environ.get("SIMPLEAPRS_ICONS", "")
-icon = os.path.join(icons, "simpleaprs.icns" if mac else "simpleaprs.ico") if icons else None
+# absolute: PyInstaller would otherwise read a relative path as relative to this file
+icon = os.path.abspath(os.path.join(icons, "simpleaprs.icns" if mac else "simpleaprs.ico")) if icons else None
 version = os.environ.get("SIMPLEAPRS_VERSION", "0.1.0")
 
 a = Analysis(

@@ -86,5 +86,5 @@ def test_the_server_is_linux_only(monkeypatch, flag, platform):
 
 
 def test_selftest_finds_the_packaged_pieces():
-    pytest.importorskip("PySide6.QtWebEngineWidgets")
+    pytest.importorskip("PySide6.QtWebEngineWidgets", exc_type=ImportError)  # a bare CI box may lack the system libraries Qt needs
     assert cli.selftest() == 0
