@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
         self.text.returnPressed.connect(self.send_message)
         send = QPushButton("Send"); send.clicked.connect(self.send_message)
         row = QHBoxLayout(); row.addWidget(self.to, 1); row.addWidget(self.text, 4); row.addWidget(send)
-        self.bulletin_no = QComboBox(); self.bulletin_no.addItems([f"BLN{i}" for i in range(10)]); self.bulletin_no.setCurrentIndex(1)
+        self.bulletin_no = QComboBox(); [self.bulletin_no.addItem(c + (" (urgent)" if c == "BLNX" else ""), c) for c in [f"BLN{i}" for i in range(10)] + ["BLNX"]]; self.bulletin_no.setCurrentIndex(1)
         self.bulletin_text = QLineEdit(); self.bulletin_text.setPlaceholderText("Bulletin (max 67 chars)"); self.bulletin_text.setMaxLength(67)
         self.bulletin_text.returnPressed.connect(self.send_bulletin)
         send_bulletin = QPushButton("Send bulletin"); send_bulletin.clicked.connect(self.send_bulletin)
@@ -697,7 +697,7 @@ class MainWindow(QMainWindow):
         self.text.clear()
 
     def send_bulletin(self) -> None:
-        to, text = self.bulletin_no.currentText(), self.bulletin_text.text().strip()
+        to, text = self.bulletin_no.currentData(), self.bulletin_text.text().strip()
         if not text:
             return
         if self.remote_mode:

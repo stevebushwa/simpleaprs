@@ -30,7 +30,7 @@ BACKLOG = 3000  # events replayed to a new client
 MAX_CLIENTS = 20
 KEEPALIVE_S = 15
 _CALL = re.compile(r"^[A-Z0-9]{1,6}(-\d{1,2})?$")
-_BULLETIN = re.compile(r"^BLN\d$")
+_BULLETIN = re.compile(r"^BLN[0-9X]$")  # BLN0-9, and BLNX for urgent ones
 
 
 def new_token() -> str:

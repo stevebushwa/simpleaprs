@@ -106,7 +106,8 @@ def test_validate_tx():
 
 def test_validate_tx_bulletin():
     assert validate_tx({"type": "bulletin", "to": "bln3", "text": " net at 8 "}) == ({"type": "bulletin", "to": "BLN3", "text": "net at 8"}, "")
-    for bad in ({"type": "bulletin", "to": "W5ABC", "text": "x"}, {"type": "bulletin", "to": "BLN", "text": "x"},
+    assert validate_tx({"type": "bulletin", "to": "blnx", "text": "evacuate"})[0] == {"type": "bulletin", "to": "BLNX", "text": "evacuate"}
+    for bad in ({"type": "bulletin", "to": "W5ABC", "text": "x"}, {"type": "bulletin", "to": "BLNY", "text": "x"}, {"type": "bulletin", "to": "BLN", "text": "x"},
                 {"type": "bulletin", "to": "BLN12", "text": "x"}, {"type": "bulletin", "to": "BLN1", "text": ""},
                 {"type": "bulletin", "to": "BLN1", "text": "x" * 68}, {"type": "bulletin", "to": "BLN1", "text": "a{1"}):
         assert validate_tx(bad)[0] is None, bad
