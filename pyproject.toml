@@ -1,0 +1,25 @@
+[project]
+name = "simpleaprs"
+version = "0.1.0"
+description = "A simple APRS app: built-in sound-card modem, offline PMTiles maps, desktop window or Pi web server"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+gui = ["PySide6"]           # the desktop app
+server = ["sounddevice"]    # the terminal server (--headless); also needs the PortAudio library, e.g. apt install libportaudio2
+all = ["PySide6", "sounddevice"]
+dev = ["pytest"]
+
+[project.scripts]
+simpleaprs = "simpleaprs.cli:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["simpleaprs"]
+
+[tool.setuptools.package-data]
+simpleaprs = ["web/*", "sounds/*"]

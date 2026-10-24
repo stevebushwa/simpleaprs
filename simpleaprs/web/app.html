@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>simpleaprs</title>
+<link rel="stylesheet" href="maplibre-gl.css">
+<link rel="stylesheet" href="map.css">
+<style>
+  :root { --bg: #fff; --fg: #1d1d1f; --dim: #6b6b70; --line: #d8d8dc; --bar: #f3f3f5; --accent: #3367d6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1b1e; --fg: #e8e8ea; --dim: #9a9aa0; --line: #38383d; --bar: #26262a; --accent: #7aa2ff; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
+  body { display: grid; grid-template-rows: auto 1fr; }
+  header { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--bar); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 15px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #c33; flex: none; }
+  .dot.on { background: #2a9d4a; }
+  #status { color: var(--dim); }
+  .grow { flex: 1; }
+  main { display: grid; grid-template-columns: 1fr 400px; min-height: 0; }
+  #mapbox { position: relative; min-height: 0; }
+  #map { position: absolute; inset: 0; }
+  #msg { bottom: 36px; }  /* clear of the map's scale bar */
+  aside { display: flex; flex-direction: column; border-left: 1px solid var(--line); min-height: 0; }
+  nav { display: flex; border-bottom: 1px solid var(--line); }
+  nav button { flex: 1; border: 0; background: none; color: var(--dim); padding: 9px 4px; font: inherit; cursor: pointer; border-bottom: 2px solid transparent; }
+  nav button.on { color: var(--fg); border-bottom-color: var(--accent); }
+  .tab { flex: 1; min-height: 0; overflow: auto; }
+  .tab[hidden] { display: none; }
+  .tab.col { display: flex; flex-direction: column; }
+  .tab.col[hidden] { display: none; }
+  table { width: 100%; border-collapse: collapse; }
+  th { position: sticky; top: 0; background: var(--bar); text-align: left; font-weight: 600; color: var(--dim); }
+  th, td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:last-child { word-break: break-word; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--bar); }
+  tr.old { color: var(--dim); }
+  tr[hidden] { display: none; }
+  .log { flex: 1; overflow: auto; padding: 6px 10px; font: 12px ui-monospace, monospace; }
+  .log div { padding: 1px 0; word-break: break-all; }
+  .log .tx { color: var(--accent); }
+  .log .t { color: var(--dim); margin-right: 8px; }
+  .bar { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  #msgs[data-show=direct] .bulletin, #msgs[data-show=bulletin] .direct { display: none; }
+  form { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
+  input, select, button.act { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; }
+  button.act { cursor: pointer; background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.act:disabled, input:disabled { opacity: .5; cursor: default; }
+  #to { width: 105px; } #text, #btext { flex: 1; min-width: 0; }
+  #send { border-top: 0; padding-bottom: 0; } #bulletin { padding-top: 6px; }
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 48% 1fr; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+<header>
+  <span class="dot" id="conn"></span><h1 id="title">simpleaprs</h1><span id="status">Connecting...</span>
+  <span class="grow"></span>
+  <label>Show <select id="filter">
+    <option value="all">All stations</option><option value="weather">Weather stations</option><option value="igate">iGates</option>
+    <option value="digi">Digipeaters</option><option value="mobile">Mobile (vehicles, aircraft, boats)</option></select></label>
+  <button class="act" id="beacon" disabled>Beacon now</button>
+</header>
+<main>
+  <div id="mapbox"><div id="map"></div><div id="msg"></div></div>
+  <aside>
+    <nav><button data-tab="stations" class="on">Stations</button><button data-tab="messages">Messages</button><button data-tab="packets">Raw packets</button></nav>
+    <div class="tab" id="stations"><table><thead><tr><th>Station</th><th>Heard</th><th>Position</th><th>Comment</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="tab col" id="messages" hidden>
+      <div class="bar"><label>Show <select id="mfilter"><option value="all">All messages</option><option value="direct">Direct messages</option><option value="bulletin">Bulletins</option></select></label></div>
+      <div class="log" id="msgs"></div>
+      <form id="send"><input id="to" placeholder="To callsign" autocapitalize="characters"><input id="text" placeholder="Message (max 67 chars)" maxlength="67"><button class="act" disabled>Send</button></form>
+      <form id="bulletin"><select id="bn" title="Bulletin number"><option>BLN0</option><option selected>BLN1</option><option>BLN2</option><option>BLN3</option><option>BLN4</option>
+        <option>BLN5</option><option>BLN6</option><option>BLN7</option><option>BLN8</option><option>BLN9</option></select>
+        <input id="btext" placeholder="Bulletin (max 67 chars)" maxlength="67"><button class="act" disabled>Send bulletin</button></form>
+    </div>
+    <div class="tab col" id="packets" hidden><div class="log" id="pkts"></div></div>
+  </aside>
+</main>
+<script src="maplibre-gl.js"></script>
+<script src="pmtiles.js"></script>
+<script src="glyphs.js"></script>
+<script src="map.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+  if (typeof window.setStation !== "function") $("msg").textContent = "The map needs WebGL, which this browser isn't providing - stations are still listed";
+  // Everything below comes off the air or from the server: only ever put it on the page with textContent.
+  const stamp = t => { const d = new Date(t * 1000);
+    return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], {hour12: false}) : d.toLocaleString([], {hour12: false, dateStyle: "short", timeStyle: "short"}); };
+  const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+                  set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+
+  // tabs
+  for (const b of document.querySelectorAll("nav button")) b.onclick = () => {
+    for (const o of document.querySelectorAll("nav button")) o.classList.toggle("on", o === b);
+    for (const t of document.querySelectorAll(".tab")) t.hidden = t.id !== b.dataset.tab;
+    store.set("tab", b.dataset.tab);
+    for (const l of document.querySelectorAll(".log")) l.scrollTop = l.scrollHeight;
+  };
+  const saved = store.get("tab"); if (saved) document.querySelector(`nav button[data-tab=${saved}]`)?.click();
+
+  // stations
+  const stations = {};  // call -> {ev, tr}
+  let filter = store.get("filter") || "all";
+  $("filter").value = filter;
+  const visible = ev => filter === "all" || ev.kinds.includes(filter);
+  // The map is the one part that needs WebGL; if it can't start, the lists still work.
+  const onMap = (name, ...args) => { if (typeof window[name] === "function") window[name](...args); };
+  const plot = call => {
+    const {ev, tr} = stations[call];
+    tr.hidden = !visible(ev);
+    tr.classList.toggle("old", ev.stale);
+    tr.children[1].textContent = stamp(ev.heard);
+    tr.children[3].textContent = ev.note;
+    const label = filter === "weather" && ev.temp ? `${call} ${ev.temp}` : call;
+    const info = [["Heard", stamp(ev.heard) + (ev.stale ? " (previous session)" : "")], ...ev.info];
+    onMap("setStation", call, ev.lat, ev.lon, label, false, info, ev.stale, ev.icon, ev.cls, ev.segs, visible(ev));
+  };
+  $("filter").onchange = e => { filter = e.target.value; store.set("filter", filter); Object.keys(stations).forEach(plot); };
+  const onStation = ev => {
+    let s = stations[ev.call];
+    if (!s) {
+      const tr = document.createElement("tr");
+      for (let i = 0; i < 4; i++) tr.appendChild(document.createElement("td"));
+      tr.children[0].textContent = ev.call;
+      tr.children[2].textContent = `${ev.lat.toFixed(4)}, ${ev.lon.toFixed(4)}`;
+      tr.onclick = () => onMap("centerOn", stations[ev.call].ev.lat, stations[ev.call].ev.lon, 12);
+      $("rows").appendChild(tr);
+      s = stations[ev.call] = {tr};
+    }
+    s.ev = ev;
+    s.tr.children[2].textContent = `${ev.lat.toFixed(4)}, ${ev.lon.toFixed(4)}`;
+    plot(ev.call);
+  };
+
+  // logs
+  const addLine = (box, t, text, cls) => {
+    const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+    const d = document.createElement("div"), ts = document.createElement("span");
+    ts.className = "t"; ts.textContent = new Date(t * 1000).toLocaleTimeString([], {hour12: false});
+    d.append(ts, text);
+    if (cls) d.className = cls;
+    box.appendChild(d);
+    while (box.childElementCount > 500) box.firstChild.remove();
+    if (stick) box.scrollTop = box.scrollHeight;
+  };
+
+  // messages: direct ones and bulletins share the log; the filter just hides one kind
+  const showMsgs = kind => { $("msgs").dataset.show = kind; $("mfilter").value = kind; $("msgs").scrollTop = $("msgs").scrollHeight; };
+  $("mfilter").onchange = e => { store.set("mfilter", e.target.value); showMsgs(e.target.value); };
+  $("msgs").dataset.show = $("mfilter").value = ["all", "direct", "bulletin"].includes(store.get("mfilter")) ? store.get("mfilter") : "all";
+
+  // talking to the server
+  let allowTx = false, centered = false, me = null;
+  const setBusy = () => { for (const el of [$("beacon"), $("send").querySelector("button"), $("bulletin").querySelector("button")]) el.disabled = !allowTx; };
+  const say = (text, ms = 6000) => { $("status").textContent = text; clearTimeout(say.t); if (ms) say.t = setTimeout(idle, ms); };
+  const idle = () => { $("status").textContent = me ? (allowTx ? "Listening" : "Listening (view only)") : "Connecting..."; };
+  const post = async body => {
+    try {
+      const r = await fetch("/api/tx", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+      const j = await r.json().catch(() => ({}));
+      say(r.ok ? "Sent" : `Server refused: ${j.error || r.status}`);
+      return r.ok;
+    } catch { say("Could not reach the server"); return false; }
+  };
+  $("beacon").onclick = () => post({type: "beacon"});
+  $("send").onsubmit = async e => {
+    e.preventDefault();
+    const to = $("to").value.trim().toUpperCase(), text = $("text").value.trim();
+    if (to && text && await post({type: "message", to, text})) $("text").value = "";
+  };
+  $("bulletin").onsubmit = async e => {
+    e.preventDefault();
+    const text = $("btext").value.trim();
+    if (text && await post({type: "bulletin", to: $("bn").value, text})) $("btext").value = "";
+  };
+  // The map's "Message" popup button: open the message form addressed to that station.
+  window.onStationAction = (what, call) => {
+    if (what !== "message") return;
+    document.querySelector("nav button[data-tab=messages]").click();
+    $("to").value = call; $("text").focus();
+  };
+
+  const handle = ev => {
+    if (ev.sync) return idle();
+    switch (ev.type) {
+      case "me":
+        me = ev; allowTx = ev.allow_tx;
+        $("title").textContent = ev.call;
+        document.title = `${ev.call} - simpleaprs`;
+        setBusy(); idle();
+        if (ev.lat || ev.lon) {
+          onMap("setStation", ev.call, ev.lat, ev.lon, ev.call, true, ev.info, false, ev.icon, "me");
+          if (!centered) { centered = true; onMap("centerOn", ev.lat, ev.lon, 9); }
+        }
+        break;
+      case "station": onStation(ev); break;
+      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); break;
+      case "message": addLine($("msgs"), ev.t, ev.text, ev.kind || "direct"); break;
+    }
+  };
+  const es = new EventSource("/web/events");
+  es.onopen = () => { $("conn").classList.add("on"); $("msgs").textContent = ""; $("pkts").textContent = ""; };  // the server replays them
+  es.onerror = () => { $("conn").classList.remove("on"); say("Connection lost, retrying...", 0); };
+  es.onmessage = e => handle(JSON.parse(e.data));
+</script>
+</html>

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=simpleaprs
+Comment=Simple APRS client with a built-in sound-card modem
+Exec=simpleaprs
+Icon=simpleaprs
+Categories=HamRadio;Network;
+Terminal=false

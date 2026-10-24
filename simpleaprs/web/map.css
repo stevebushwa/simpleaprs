@@ -1,0 +1,14 @@
+.st { transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; cursor: pointer; --c: #d33; }
+.st.wx { --c: #1e6fe8; } .st.igate { --c: #1f9d3a; } .st.digi { --c: #e08a00; } .st.me { --c: #8a3ffc; }
+.st .ic { width: 24px; height: 24px; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-shadow: 0 0 3px #000; display: flex; align-items: center; justify-content: center; }
+.st .ic svg { width: 16px; height: 16px; }
+.st.old { opacity: .55; filter: grayscale(1); }
+.st b { font: 11px sans-serif; background: #fffd; padding: 0 3px; border-radius: 3px; margin-top: 2px; white-space: nowrap; }
+.maplibregl-popup-content { font: 12px sans-serif; max-width: 280px; }
+.maplibregl-popup-content h4 { margin: 0 0 4px; font-size: 14px; }
+.maplibregl-popup-content dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; }
+.maplibregl-popup-content dt { color: #666; }
+.maplibregl-popup-content dd { margin: 0; word-break: break-word; }
+.maplibregl-popup-content code { font-size: 11px; }
+.maplibregl-popup-content button { margin-top: 6px; font: inherit; padding: 3px 10px; border: 0; border-radius: 4px; background: #3367d6; color: #fff; cursor: pointer; }
+#msg { position: absolute; left: 8px; bottom: 8px; font: 12px sans-serif; background: #fffd; padding: 3px 6px; border-radius: 4px; }
