@@ -33,6 +33,15 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     g.add_argument("--beacon-minutes", type=int, help="auto beacon interval, 0 = only when a client asks")
     g.add_argument("--port", type=int, help="network port to serve on")
     g.add_argument("--nomad-url", metavar="URL", help="Project N.O.M.A.D. map server, e.g. http://nomad.local:8080")
+    g.add_argument("--igate", action=argparse.BooleanOptionalAction, default=None,
+                   help="pass what the radio hears to the internet (APRS-IS); needs --igate-passcode")
+    g.add_argument("--igate-server", metavar="HOST:PORT", help="APRS-IS server, default rotate.aprs2.net:14580")
+    g.add_argument("--igate-passcode", metavar="CODE", help="APRS-IS passcode for your callsign")
+    g.add_argument("--igate-to-rf", action=argparse.BooleanOptionalAction, default=None,
+                   help="also transmit internet messages for stations heard directly here (the radio transmits on its own)")
+    g.add_argument("--igate-radius", type=int, metavar="KM", help="how far from you to look for those messages, default 50")
+    g.add_argument("--digipeater", choices=("off", "fill", "wide"),
+                   help="repeat packets that ask for it: fill = WIDE1-1 only, wide = also WIDE2-1/WIDE2-2 (the radio transmits on its own)")
     g.add_argument("--no-tx", action="store_true", help="don't let the web page or clients transmit through this radio")
     g.add_argument("--allow-host", action="append", default=[], metavar="NAME",
                    help="also accept requests addressed to this host name (the server refuses names that don't look like "
@@ -43,7 +52,9 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
 # command line option -> Config field
 OVERRIDES = {"callsign": "callsign", "lat": "lat", "lon": "lon", "symbol": "symbol", "comment": "comment",
              "path": "path", "input_device": "input_device", "output_device": "output_device",
-             "lead_ms": "tx_lead_ms", "beacon_minutes": "beacon_minutes", "port": "share_port", "nomad_url": "nomad_url"}
+             "lead_ms": "tx_lead_ms", "beacon_minutes": "beacon_minutes", "port": "share_port", "nomad_url": "nomad_url",
+             "igate": "igate_enabled", "igate_server": "igate_server", "igate_passcode": "igate_passcode",
+             "igate_to_rf": "igate_to_rf", "igate_radius": "igate_radius_km"}
 
 
 def apply_overrides(cfg, args: argparse.Namespace) -> None:
@@ -52,6 +63,8 @@ def apply_overrides(cfg, args: argparse.Namespace) -> None:
         v = getattr(args, opt)
         if v is not None:
             setattr(cfg, field, v.upper() if opt == "callsign" else v)
+    if args.digipeater:
+        cfg.digi_enabled, cfg.digi_wide = args.digipeater != "off", args.digipeater == "wide"
     if args.no_tx:
         cfg.share_allow_tx = False
 

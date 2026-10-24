@@ -23,7 +23,7 @@ The install has two optional parts: `[gui]` (PySide6, the desktop app) and `[ser
   on your LAN or a VPN (e.g. Tailscale). Remembered stations for a followed server are kept separately from local ones.
 
 - **Settings** are in tabs: Station, Radio, Alerts, Map, Network, iGate, Digipeater.
-- **iGate** (desktop app, with a local radio): Settings > iGate gates what the radio hears to an APRS-IS server (default
+- **iGate** (desktop app with a local radio, or the terminal server): Settings > iGate gates what the radio hears to an APRS-IS server (default
   `rotate.aprs2.net:14580`). You need the APRS-IS passcode for your callsign (the Calculate button works it out). Packets that
   came from the internet, are third-party, or carry `NOGATE`/`RFONLY` are never gated, and each packet goes out once. Your own
   position is sent to the server every 30 minutes. Optionally it also puts internet *messages* on the air, but only for
@@ -32,7 +32,7 @@ The install has two optional parts: `[gui]` (PySide6, the desktop app) and `[ser
   wide-area mode also answers `WIDE2-1`/`WIDE2-2`. Each hop used is replaced by your callsign, the same packet is never
   repeated twice within 30 seconds, and the transmission waits a random fraction of a second so neighbouring digipeaters
   don't key up together. Only worth running where your radio reaches ground other digipeaters don't.
-  Both are for the desktop app; the terminal server doesn't run them yet.
+  Both also run in the terminal server (below), where they are the natural fit for a Pi that stays on.
 
 ## Terminal / Pi server
 
@@ -68,6 +68,13 @@ are no questions, so it works from a script or a service:
 
     simpleaprs --headless --callsign N0CALL-7 --lat 39.50 --lon -98.35 \
         --input-device "USB Audio" --output-device "USB Audio" --nomad-url http://nomad.local:8080 --save
+
+**iGate and digipeater** on the server: `--setup` asks about them, or use `--igate --igate-passcode CODE` (plus
+`--igate-server HOST:PORT`, `--igate-to-rf`, `--igate-radius KM`) and `--digipeater fill|wide|off`; `--no-igate` etc. turn them
+off again for a run. The startup banner shows what is on, and a line is logged whenever the iGate connects or drops. It won't
+start with `--igate` and no passcode. These transmit (digipeating, and internet messages to RF) on their own account:
+`--no-tx` only stops the web page and clients from transmitting, it does not turn them off. Packets the server repeats or gates
+to RF are marked "relayed" in the feed, so a desktop app following the server doesn't list them as your own messages.
 
 Other options: `--symbol --comment --path --lead-ms --beacon-minutes --port --no-tx --allow-host` (see `--help`). A device
 name is matched exactly or as part of the full name, and one that isn't found is an error rather than a silent fall back

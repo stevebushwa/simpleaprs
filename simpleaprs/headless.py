@@ -6,13 +6,17 @@ for a LAN.
 """
 from __future__ import annotations
 
+import random
 import signal
 import sys
 import threading
 import time
 
 from . import aprs
+from .ax25 import Frame
 from .config import PATH, STATIONS_PATH, Config
+from .digipeater import Digipeater
+from .igate import IGate, passcode
 from .mapserver import MapProxy
 from .netshare import Hub, ShareServer, lan_ip
 from .soundio import SoundRadio, device_names, find_device
@@ -73,6 +77,17 @@ def ask_device(label: str, names: list[str], current: str) -> str:
         print("  Pick a number from the list.")
 
 
+def ask_passcode(cfg: Config) -> str:
+    while True:
+        v = ask("APRS-IS passcode for your callsign (type calc to work it out from the callsign)", cfg.igate_passcode)
+        if v.lower() == "calc":
+            v = str(passcode(cfg.callsign))
+            print(f"  Passcode {v}")
+        if v:
+            return v
+        print("  A passcode is required to send packets to APRS-IS.")
+
+
 def setup(cfg: Config) -> Config:
     """Walk through the settings a server needs. Existing values are the defaults, so re-running
     it to change one thing is just a matter of pressing Enter through the rest."""
@@ -90,7 +105,7 @@ def setup(cfg: Config) -> Config:
             break
         print("  Two characters, like /-.")
     cfg.comment = ask("Beacon comment", cfg.comment)
-    cfg.path = ask("Digipeater path", cfg.path)
+    cfg.path = ask("Path for your packets", cfg.path)
     cfg.input_device = ask_device("Radio audio in (the sound card the radio's speaker/data port feeds)",
                                   device_names(True), cfg.input_device)
     cfg.output_device = ask_device("Radio audio out (the sound card feeding the radio's mic/data port)",
@@ -100,6 +115,16 @@ def setup(cfg: Config) -> Config:
     cfg.share_port = ask_int("Network port", cfg.share_port, 1024, 65535)
     cfg.nomad_url = ask("Map server (Project N.O.M.A.D. address, blank for no map)", cfg.nomad_url)
     cfg.share_allow_tx = ask_yes("Let the web page and other clients transmit through this radio", cfg.share_allow_tx)
+    cfg.igate_enabled = ask_yes("\nAct as an iGate (pass what this radio hears to the internet, APRS-IS)", cfg.igate_enabled)
+    if cfg.igate_enabled:
+        cfg.igate_server = ask("APRS-IS server (host:port)", cfg.igate_server)
+        cfg.igate_passcode = ask_passcode(cfg)
+        cfg.igate_to_rf = ask_yes("Also transmit internet messages for stations heard directly here (the radio will transmit on its own)", cfg.igate_to_rf)
+        if cfg.igate_to_rf:
+            cfg.igate_radius_km = ask_int("How far from you, in km, to look for those messages", cfg.igate_radius_km, 1, 500)
+    cfg.digi_enabled = ask_yes("\nAct as a digipeater (repeat packets that ask for it; the radio will transmit on its own)", cfg.digi_enabled)
+    if cfg.digi_enabled:
+        cfg.digi_wide = ask_yes("Wide-area (also answer WIDE2-1/WIDE2-2) rather than fill-in (WIDE1-1 only)", cfg.digi_wide)
     cfg.save()
     print(f"\nSaved to {PATH}\n")
     return cfg
@@ -115,6 +140,10 @@ class Server:
         self.tracker = Tracker(cfg, self._emit, self.transmit, STATIONS_PATH)
         self.radio = SoundRadio(self.on_frame)
         self.share: ShareServer | None = None
+        self.igate: IGate | None = None
+        self.digi: Digipeater | None = None
+        self._igate_state = ""
+        self.stopping = False
         self.next_beacon = self.next_save = 0.0
 
     def start(self) -> bool:
@@ -123,6 +152,9 @@ class Server:
             if name and find_device(name, inputs) is None:  # the desktop app quietly uses the default; a server nobody watches shouldn't
                 print(f"Audio {label} device '{name}' not found. Run --list-devices to see what is available.", file=sys.stderr)
                 return False
+        if c.igate_enabled and not c.igate_passcode:
+            print("The iGate needs the APRS-IS passcode for your callsign. Run again with --setup, or give --igate-passcode.", file=sys.stderr)
+            return False
         self.tracker.load()
         cache = TileCache(max_bytes=c.map_cache_mb * 1024 * 1024) if c.map_cache else None
         web = WebUI(self.web_hub, self.tracker, MapProxy(c.nomad_url, cache), c.share_allow_tx)
@@ -136,11 +168,20 @@ class Server:
             print("No audio input found. Run again with --setup to pick a device, or --list-devices to see them.", file=sys.stderr)
             self.share.stop()
             return False
+        if c.digi_enabled:
+            self.digi = Digipeater(c.callsign, c.digi_wide)
+        if c.igate_enabled:
+            self.igate = IGate(c, self._igate_status, self.igate_to_rf)
+            self.igate.start()
         addr = f"{lan_ip()}:{self.share.port}"
         print(f"simpleaprs server for {c.callsign} listening for packets")
         print(f"  Web page       http://{addr}/")
         print(f"  Desktop app    Settings > Connect to another simpleaprs > {addr} (no token)")
         print(f"  Transmitting   " + ("allowed from the web page and clients" if c.share_allow_tx else "off"))
+        if self.igate:
+            print(f"  iGate          to {c.igate_server}" + (f", and messages for stations heard here back to RF (within {c.igate_radius_km} km)" if c.igate_to_rf else ""))
+        if self.digi:
+            print("  Digipeater     " + ("wide-area (WIDE1-1, WIDE2-N)" if c.digi_wide else "fill-in (WIDE1-1)") + f" and {c.callsign}")
         print("  Anyone who can reach this port can use it: keep it on your LAN or a VPN.")
         print("  Ctrl+C to stop\n", flush=True)
         now = time.monotonic()
@@ -159,6 +200,9 @@ class Server:
             self.tracker.save()
 
     def stop(self) -> None:
+        self.stopping = True
+        if self.igate:
+            self.igate.stop()
         self.tracker.save()
         self.radio.stop()
         if self.share:
@@ -177,12 +221,45 @@ class Server:
         now = time.time()
         self.hub.publish({"t": now, "raw": raw.hex()})
         self.tracker.on_frame(raw, now)
+        if self.igate or self.digi:
+            try:
+                self._relay(Frame.decode(raw))
+            except ValueError:
+                pass
+
+    def _relay(self, frame: Frame) -> None:
+        """A frame we just heard: offer it to the iGate, and repeat it if we are a digipeater and it asks for that."""
+        if self.igate:
+            self.igate.send_rf(frame)
+        out = self.digi.digipeat(frame) if self.digi else None
+        if out:  # a little random wait, so two digipeaters that heard the same packet don't key up together
+            threading.Timer(random.uniform(0.3, 1.5), self.send_frame, (out, True)).start()
+
+    def _igate_status(self, text: str) -> None:
+        head = text.split(" - ")[0]  # the part before the running count: only a change of state is worth a line
+        if head != self._igate_state:
+            self._igate_state = head
+            log(text)
+
+    def igate_to_rf(self, raw: bytes) -> None:
+        """The iGate wants a message from the internet put on the air."""
+        try:
+            self.send_frame(Frame.decode(raw), True)
+        except ValueError:
+            pass
 
     def transmit(self, info: bytes) -> None:
+        self.send_frame(aprs.make_frame(self.cfg.callsign, info, self.cfg.path))
+
+    def send_frame(self, frame: Frame, relay: bool = False) -> None:
+        """Put a frame on the air. relay: it is someone else's packet that we are passing on (digipeating or
+        gating), which clients following this radio must not show as our own message."""
+        if self.stopping:
+            return
         c = self.cfg
-        raw = aprs.make_frame(c.callsign, info, c.path).encode()
-        self.hub.publish({"t": time.time(), "raw": raw.hex(), "tx": True})
-        self.tracker.on_tx(raw)
+        raw = frame.encode()
+        self.hub.publish({"t": time.time(), "raw": raw.hex(), "tx": True, **({"relay": True} if relay else {})})
+        self.tracker.on_tx(raw, relay=relay)
         self.radio.transmit(raw, c.tx_lead_ms, c.tx_level)
 
     def beacon(self) -> None:

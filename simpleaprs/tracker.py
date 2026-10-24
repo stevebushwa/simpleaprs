@@ -163,16 +163,16 @@ class Tracker:
                         if q is not self.stations[p.source] and any(str(a).rstrip("*") == p.source for a in q.frame.path):
                             self._station(q.source)
 
-    def on_tx(self, raw: bytes, now: float | None = None) -> None:
-        """A frame we just transmitted (beacon, message, ack)."""
+    def on_tx(self, raw: bytes, now: float | None = None, relay: bool = False) -> None:
+        """A frame we just transmitted (beacon, message, ack). relay: someone else's packet we passed on."""
         try:
             frame = Frame.decode(raw)
         except ValueError:
             return
         now = now if now is not None else time.time()
-        self._packet(now, f"TX {frame}", tx=True)
+        self._packet(now, f"TX {frame}" + ("   (relayed)" if relay else ""), tx=True)
         p = aprs.parse(frame)
-        if p.kind == "message" and not p.text.startswith("ack"):
+        if p.kind == "message" and not p.text.startswith("ack") and not relay:
             self._message(now, f"me -> {p.to}: {p.text}", "bulletin" if aprs.is_bulletin(p.to) else "direct")
 
     def _on_message(self, p: aprs.Packet, now: float, via: str = "") -> None:
