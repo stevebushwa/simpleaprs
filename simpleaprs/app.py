@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import sys
 import time
 
@@ -20,6 +21,8 @@ from .alerts import Alerts
 from .audio import Radio, device_names
 from .ax25 import Frame
 from .config import STATIONS_PATH, STATIONS_REMOTE_PATH, Config
+from .digipeater import Digipeater
+from .igate import IGate, passcode
 from .mapserver import MapServer
 from .netclient import RemoteClient
 from .netshare import Hub, ShareServer, lan_ip, new_token
@@ -48,7 +51,6 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.cfg = cfg
-        form = QFormLayout(self)
         self.call = QLineEdit(cfg.callsign)
         self.call.setPlaceholderText("e.g. N0CALL-7")
         self.lat = QDoubleSpinBox(); self.lat.setRange(-90, 90); self.lat.setDecimals(5); self.lat.setValue(cfg.lat)
@@ -108,26 +110,55 @@ class SettingsDialog(QDialog):
         self.share_require.setChecked(cfg.share_require_token)
         self.share_tx = QCheckBox("Let clients transmit through this radio (always needs the token)")
         self.share_tx.setChecked(cfg.share_allow_tx)
+        self.ig_on = QCheckBox("Gate what the radio hears to the internet (APRS-IS)"); self.ig_on.setChecked(cfg.igate_enabled)
+        self.ig_server = QLineEdit(cfg.igate_server); self.ig_server.setPlaceholderText("rotate.aprs2.net:14580")
+        self.ig_pass = QLineEdit(cfg.igate_passcode); self.ig_pass.setPlaceholderText("APRS-IS passcode for your callsign")
+        calc = QPushButton("Calculate"); calc.clicked.connect(self._calc_passcode)
+        pass_row = QWidget(); pr = QHBoxLayout(pass_row); pr.setContentsMargins(0, 0, 0, 0); pr.addWidget(self.ig_pass, 1); pr.addWidget(calc)
+        self.ig_to_rf = QCheckBox("Also transmit internet messages for stations heard directly here (uses your radio)")
+        self.ig_to_rf.setChecked(cfg.igate_to_rf)
+        self.ig_radius = QSpinBox(); self.ig_radius.setRange(1, 500); self.ig_radius.setSuffix(" km"); self.ig_radius.setValue(cfg.igate_radius_km)
+        self.dg_on = QCheckBox("Repeat packets that ask for it"); self.dg_on.setChecked(cfg.digi_enabled)
+        self.dg_mode = QComboBox()
+        self.dg_mode.addItem("Fill-in: answers WIDE1-1 and our callsign", False)
+        self.dg_mode.addItem("Wide-area: also answers WIDE2-1 and WIDE2-2", True)
+        self.dg_mode.setCurrentIndex(1 if cfg.digi_wide else 0)
         for w in (self.mode,):
             w.currentIndexChanged.connect(self._mode_changed)
         self.share.toggled.connect(self._mode_changed)
+        self.ig_on.toggled.connect(self._mode_changed); self.ig_to_rf.toggled.connect(self._mode_changed)
+        self.dg_on.toggled.connect(self._mode_changed)
         self.share_hint = QLabel(); self.share_hint.setWordWrap(True)
         self._mode_changed()
-        for label, w in [
-            ("Mode", self.mode), ("Server address", self.remote_url), ("Server token", self.remote_token),
-            ("Callsign", self.call), ("Latitude", self.lat), ("Longitude", self.lon),
-            ("Map symbol", symbol_row), ("Beacon comment", self.comment), ("Digipeater path", self.path),
-            ("Radio audio in", self.inp), ("Radio audio out", self.out),
-            ("VOX lead-in", self.lead), ("Alert sounds out", self.alert_out), ("Play alert for", self.a_msg), ("", self.a_new), ("", self.a_sent), ("Auto beacon", self.beacon), ("N.O.M.A.D. server", self.nomad), ("Map cache", self.cache_on), ("Cache size limit", cache_row),
-            ("Sharing", self.share), ("Share port", self.share_port), ("Share token", token_row),
-            ("", self.share_require), ("", self.share_tx),
-        ]:
-            form.addRow(label, w)
-        form.addRow(self.share_hint)
-        form.addRow(QLabel("Tip: with VOX, raise the lead-in until the start of packets stops getting cut off."))
+        def page(rows, *notes: QLabel) -> QWidget:
+            w = QWidget(); f = QFormLayout(w)
+            for label, widget in rows:
+                f.addRow(label, widget)
+            for n in notes:
+                n.setWordWrap(True); f.addRow(n)
+            return w
+        ig_hint = QLabel("Needs a callsign and the APRS-IS passcode for it. Packets that already came from the internet, "
+                         "or ask not to be gated, are never passed on. Sending to the radio is limited to messages for stations "
+                         "this radio has heard directly in the last 30 minutes, at most 10 a minute.")
+        dg_hint = QLabel("This transmits on its own whenever a packet asks to be repeated, so it only helps if your radio "
+                         "reaches ground other digipeaters don't. Leave it off if you're not in a good spot.")
+        tabs = QTabWidget()
+        tabs.addTab(page([("Callsign", self.call), ("Latitude", self.lat), ("Longitude", self.lon), ("Map symbol", symbol_row),
+                          ("Beacon comment", self.comment), ("Path for your packets", self.path), ("Auto beacon", self.beacon)]), "Station")
+        tabs.addTab(page([("Radio audio in", self.inp), ("Radio audio out", self.out), ("VOX lead-in", self.lead)],
+                         QLabel("Tip: with VOX, raise the lead-in until the start of packets stops getting cut off.")), "Radio")
+        tabs.addTab(page([("Alert sounds out", self.alert_out), ("Play alert for", self.a_msg), ("", self.a_new), ("", self.a_sent)]), "Alerts")
+        tabs.addTab(page([("N.O.M.A.D. server", self.nomad), ("Map cache", self.cache_on), ("Cache size limit", cache_row)]), "Map")
+        tabs.addTab(page([("Mode", self.mode), ("Server address", self.remote_url), ("Server token", self.remote_token),
+                          ("Sharing", self.share), ("Share port", self.share_port), ("Share token", token_row),
+                          ("", self.share_require), ("", self.share_tx)], self.share_hint), "Network")
+        tabs.addTab(page([("", self.ig_on), ("Server", self.ig_server), ("Passcode", pass_row), ("", self.ig_to_rf),
+                          ("Message range", self.ig_radius)], ig_hint), "iGate")
+        tabs.addTab(page([("", self.dg_on), ("Kind", self.dg_mode)], dg_hint), "Digipeater")
+        self.tabs = tabs
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self._ok); bb.rejected.connect(self.reject)
-        form.addRow(bb)
+        root = QVBoxLayout(self); root.addWidget(tabs); root.addWidget(bb)
 
     def _tile_cache(self) -> TileCache | None:
         return getattr(self.parent(), "tile_cache", None)
@@ -145,8 +176,14 @@ class SettingsDialog(QDialog):
         remote = self.mode.currentData() == "remote"
         for w in (self.remote_url, self.remote_token):
             w.setEnabled(remote)
-        for w in (self.share, self.call, self.lat, self.lon, self.symbol, self.comment, self.path, self.inp, self.out, self.lead, self.beacon):
+        for w in (self.share, self.call, self.lat, self.lon, self.symbol, self.comment, self.path, self.inp, self.out, self.lead, self.beacon,
+                  self.ig_on, self.dg_on):
             w.setEnabled(not remote)
+        gating = self.ig_on.isChecked() and not remote
+        for w in (self.ig_server, self.ig_pass, self.ig_to_rf):
+            w.setEnabled(gating)
+        self.ig_radius.setEnabled(gating and self.ig_to_rf.isChecked())
+        self.dg_mode.setEnabled(self.dg_on.isChecked() and not remote)
         sharing = self.share.isChecked() and not remote
         for w in (self.share_port, self.share_token, self.share_require, self.share_tx):
             w.setEnabled(sharing)
@@ -156,6 +193,14 @@ class SettingsDialog(QDialog):
             "Other simpleaprs instances connect to http://%s:%d with the token. Viewers see your callsign, position and "
             "everything this radio hears. Traffic is not encrypted: keep it to your LAN or a VPN such as Tailscale." % (lan_ip(), self.share_port.value())
             if sharing else "")
+
+    def _calc_passcode(self) -> None:
+        call = self.call.text().strip()
+        if call:
+            self.ig_pass.setText(str(passcode(call)))
+        else:
+            self.tabs.setCurrentIndex(0)
+            QMessageBox.warning(self, "Settings", "Enter your callsign first (Station tab).")
 
     def _symbol(self) -> str:
         sym = self.symbol.currentData()
@@ -172,13 +217,20 @@ class SettingsDialog(QDialog):
         call = self.call.text().strip().upper()
         remote = self.mode.currentData() == "remote"
         if remote and not self.remote_url.text().strip():
+            self.tabs.setCurrentIndex(4)
             QMessageBox.warning(self, "Settings", "Enter the address of the server to connect to.")
             return
         if not call and not remote:
+            self.tabs.setCurrentIndex(0)
             QMessageBox.warning(self, "Settings", "Enter your callsign.")
             return
         if not remote and len(self._symbol()) != 2:
+            self.tabs.setCurrentIndex(0)
             QMessageBox.warning(self, "Settings", "A custom symbol is two characters: the table (/ or \\) then the code, like /-.")
+            return
+        if not remote and self.ig_on.isChecked() and not self.ig_pass.text().strip():
+            self.tabs.setCurrentIndex(5)
+            QMessageBox.warning(self, "Settings", "Enter your APRS-IS passcode, or press Calculate to work it out from your callsign.")
             return
         c = self.cfg
         c.mode, c.remote_url, c.remote_token = self.mode.currentData(), self.remote_url.text().strip(), self.remote_token.text().strip()
@@ -192,12 +244,17 @@ class SettingsDialog(QDialog):
         c.alert_device, c.alert_message = self.alert_out.currentData(), self.a_msg.isChecked()
         c.alert_new_station, c.alert_sent = self.a_new.isChecked(), self.a_sent.isChecked()
         c.tx_lead_ms, c.beacon_minutes, c.nomad_url = self.lead.value(), self.beacon.value(), self.nomad.text().strip()
+        c.igate_enabled, c.igate_server, c.igate_passcode = self.ig_on.isChecked(), self.ig_server.text().strip(), self.ig_pass.text().strip()
+        c.igate_to_rf, c.igate_radius_km = self.ig_to_rf.isChecked(), self.ig_radius.value()
+        c.digi_enabled, c.digi_wide = self.dg_on.isChecked(), bool(self.dg_mode.currentData())
         c.save()
         self.accept()
 
 
 class MainWindow(QMainWindow):
     remote_tx_requested = Signal(dict)  # emitted from share-server threads, handled on the GUI thread
+    igate_status = Signal(str)  # from the iGate's thread
+    igate_to_rf = Signal(bytes)  # a frame the iGate wants transmitted
 
     def __init__(self) -> None:
         super().__init__()
@@ -235,6 +292,10 @@ class MainWindow(QMainWindow):
         self.remote.state.connect(lambda t: self.status.setText(t))
         self.remote.tx_result.connect(lambda ok, msg: self.status.setText("Sent through the server's radio" if ok else f"Server refused: {msg}"))
         self.remote_tx_requested.connect(self._remote_tx)
+        self.igate: IGate | None = None
+        self.digi: Digipeater | None = None
+        self.igate_status.connect(self._igate_status)
+        self.igate_to_rf.connect(self._igate_transmit)
 
         self.map = QWebEngineView()
         map_page = MapPage(self.map)
@@ -281,6 +342,9 @@ class MainWindow(QMainWindow):
         self.status = QLabel("Starting..."); tb.addWidget(self.status)
         tb.addSeparator(); tb.addWidget(QLabel(" RX audio "))
         self.meter = QProgressBar(); self.meter.setMaximumWidth(120); self.meter.setTextVisible(False); tb.addWidget(self.meter)
+        self._igate_sep = tb.addSeparator()
+        self.igate_label = QLabel(); self._igate_action = tb.addWidget(self.igate_label)
+        self._igate_sep.setVisible(False); self._igate_action.setVisible(False)
         spacer = QWidget(); spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred); tb.addWidget(spacer)
         tb.addWidget(QLabel(" Show "))
         self.filter = QComboBox()
@@ -350,6 +414,8 @@ class MainWindow(QMainWindow):
         self.alerts.set_device(self.cfg.alert_device)
         self.timer.stop()
         self._stop_share()
+        self._stop_igate()
+        self.digi = None
         self.share_note = ""
         if self.remote_mode:
             self.radio.stop()
@@ -360,9 +426,50 @@ class MainWindow(QMainWindow):
         self.remote.stop()
         self._start_share()
         listening = self.radio.start(self.cfg.input_device, self.cfg.output_device)
+        self._start_igate()
+        if self.cfg.digi_enabled and self.cfg.configured:
+            self.digi = Digipeater(self.cfg.callsign, self.cfg.digi_wide)
         self.status.setText(self._idle_status() if listening else "No audio input - check Settings" + self.share_note)
         if self.cfg.beacon_minutes:
             self.timer.start(self.cfg.beacon_minutes * 60_000)
+
+    def _start_igate(self) -> None:
+        if not (self.cfg.igate_enabled and self.cfg.configured):
+            return
+        self.igate = IGate(self.cfg, self.igate_status.emit, self.igate_to_rf.emit)
+        self.igate.start()
+        self._set_igate_label("iGate: starting...")
+
+    def _stop_igate(self) -> None:
+        if self.igate:
+            self.igate.stop()
+            self.igate = None
+        self._set_igate_label("")
+
+    def _set_igate_label(self, text: str) -> None:
+        self.igate_label.setText(" " + text + " " if text else "")
+        self._igate_sep.setVisible(bool(text)); self._igate_action.setVisible(bool(text))
+
+    def _igate_status(self, text: str) -> None:
+        if self.igate:  # a late message from a gateway that has since been stopped is not news
+            self._set_igate_label(text)
+
+    def _igate_transmit(self, raw: bytes) -> None:
+        """The iGate wants a message from the internet put on the air."""
+        if self.remote_mode or not self.igate:
+            return
+        try:
+            self._send_frame(Frame.decode(raw), relay=True)
+        except ValueError:
+            pass
+
+    def _relay(self, frame: Frame) -> None:
+        """A frame we just heard: offer it to the iGate, and repeat it if we are a digipeater and it asks for that."""
+        if self.igate:
+            self.igate.send_rf(frame)
+        out = self.digi.digipeat(frame) if self.digi else None
+        if out:  # a little random wait, so two digipeaters that heard the same packet don't key up together
+            QTimer.singleShot(random.randint(300, 1500), lambda: self._send_frame(out, relay=True))
 
     def _stop_share(self) -> None:
         if self.share:
@@ -415,11 +522,11 @@ class MainWindow(QMainWindow):
         elif "raw" in ev:
             raw = bytes.fromhex(ev["raw"])
             if ev.get("tx"):
-                self._on_remote_tx_frame(raw, ev.get("t", time.time()))
+                self._on_remote_tx_frame(raw, ev.get("t", time.time()), ev.get("relay", False))
             else:
                 self.on_frame(raw, ev.get("t"), replay=not self._synced)
 
-    def _on_remote_tx_frame(self, raw: bytes, t: float) -> None:
+    def _on_remote_tx_frame(self, raw: bytes, t: float, relay: bool = False) -> None:
         try:
             frame = Frame.decode(raw)
         except ValueError:
@@ -427,7 +534,7 @@ class MainWindow(QMainWindow):
         stamp = time.strftime("%H:%M:%S", time.localtime(t))
         self.packets.append(f"{stamp}  TX {frame}")
         p = aprs.parse(frame)
-        if p.kind == "message" and not p.text.startswith("ack"):
+        if p.kind == "message" and not p.text.startswith("ack") and not relay:  # a relayed one is someone else's message
             self._log_message("bulletin" if aprs.is_bulletin(p.to) else "direct", f"{stamp}  me -> {p.to}: {p.text}")
 
     def _map_ready(self) -> None:
@@ -572,6 +679,8 @@ class MainWindow(QMainWindow):
         stamp = time.strftime("%H:%M:%S", time.localtime(now))
         if not self.remote_mode:
             self.hub.publish({"t": now, "raw": raw.hex()})
+            if not replay:
+                self._relay(frame)
         for digi in aprs.digipeaters(frame):
             self._add_role(digi, "digi")
         if p.gated:
@@ -670,9 +779,13 @@ class MainWindow(QMainWindow):
     def transmit(self, info: bytes) -> None:
         if not self.cfg.configured:
             return
-        frame = aprs.make_frame(self.cfg.callsign, info, self.cfg.path)
-        self.packets.append(f"{time.strftime('%H:%M:%S')}  TX {frame}")
-        self.hub.publish({"t": time.time(), "raw": frame.encode().hex(), "tx": True})
+        self._send_frame(aprs.make_frame(self.cfg.callsign, info, self.cfg.path))
+
+    def _send_frame(self, frame: Frame, relay: bool = False) -> None:
+        """Put a frame on the air. relay: it is someone else's packet that we are passing on (digipeating or
+        gating), which clients following this radio must not show as our own message."""
+        self.packets.append(f"{time.strftime('%H:%M:%S')}  TX {frame}" + ("   (relayed)" if relay else ""))
+        self.hub.publish({"t": time.time(), "raw": frame.encode().hex(), "tx": True, **({"relay": True} if relay else {})})
         self.radio.transmit(frame.encode(), self.cfg.tx_lead_ms, self.cfg.tx_level)
 
     def beacon_now(self) -> None:
@@ -719,6 +832,7 @@ class MainWindow(QMainWindow):
         self.radio.stop()
         self.remote.stop()
         self._stop_share()
+        self._stop_igate()
         if self.server:
             self.server.stop()
         super().closeEvent(e)

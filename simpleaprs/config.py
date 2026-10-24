@@ -41,6 +41,13 @@ class Config:
     share_token: str = ""
     share_require_token: bool = True  # off lets anyone on the network watch; transmitting always needs the token
     share_allow_tx: bool = True
+    igate_enabled: bool = False  # pass what the radio hears to APRS-IS (needs a local radio)
+    igate_server: str = "rotate.aprs2.net:14580"
+    igate_passcode: str = ""  # the APRS-IS passcode for the callsign
+    igate_to_rf: bool = False  # also transmit internet messages for stations heard directly on RF
+    igate_radius_km: int = 50  # how far from us the server looks for those messages
+    digi_enabled: bool = False  # repeat packets that ask for it (WIDE1-1, WIDE2-N, or our callsign)
+    digi_wide: bool = False  # a wide-area digipeater (WIDE1-1 and WIDE2-N) rather than a fill-in (WIDE1-1 only)
 
     @classmethod
     def load(cls) -> "Config":

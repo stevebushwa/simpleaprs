@@ -22,6 +22,18 @@ The install has two optional parts: `[gui]` (PySide6, the desktop app) and `[ser
   transmit; clients can only ask for a beacon or a message, never send raw frames. Traffic is plain HTTP, so keep it
   on your LAN or a VPN (e.g. Tailscale). Remembered stations for a followed server are kept separately from local ones.
 
+- **Settings** are in tabs: Station, Radio, Alerts, Map, Network, iGate, Digipeater.
+- **iGate** (desktop app, with a local radio): Settings > iGate gates what the radio hears to an APRS-IS server (default
+  `rotate.aprs2.net:14580`). You need the APRS-IS passcode for your callsign (the Calculate button works it out). Packets that
+  came from the internet, are third-party, or carry `NOGATE`/`RFONLY` are never gated, and each packet goes out once. Your own
+  position is sent to the server every 30 minutes. Optionally it also puts internet *messages* on the air, but only for
+  stations this radio heard directly in the last 30 minutes, at most 10 a minute (off by default; it makes your radio transmit).
+- **Digipeater** (off by default): repeats packets that ask for it. Fill-in mode answers `WIDE1-1` and your own callsign;
+  wide-area mode also answers `WIDE2-1`/`WIDE2-2`. Each hop used is replaced by your callsign, the same packet is never
+  repeated twice within 30 seconds, and the transmission waits a random fraction of a second so neighbouring digipeaters
+  don't key up together. Only worth running where your radio reaches ground other digipeaters don't.
+  Both are for the desktop app; the terminal server doesn't run them yet.
+
 ## Terminal / Pi server
 
 `--headless` (or `--server`) runs with no window, no Qt and no display: it listens to the radio and serves a **web page**
