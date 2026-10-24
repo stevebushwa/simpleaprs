@@ -29,7 +29,7 @@ class Config:
     alert_new_station: bool = False
     alert_sent: bool = False
     alerts_muted: bool = False
-    nomad_url: str = "http://nomad.local:8080"
+    nomad_url: str = ""  # Project N.O.M.A.D. map server, e.g. http://nomad.local:8080; blank = no map
     map_cache: bool = True  # keep map tiles on disk so they load fast and work when the map server is away
     map_cache_mb: int = 500
     map_filter: str = "all"  # all | weather | igate | digi | mobile

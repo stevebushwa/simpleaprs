@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from simpleaprs.mapserver import MapServer
+from simpleaprs.mapserver import MapProxy, MapServer
 
 
 @pytest.fixture
@@ -56,3 +56,14 @@ def test_unknown_and_escaping_paths_are_not_found(nomad):
         assert get(m, "/..%2Fconfig.py")[0] == 404
     finally:
         m.stop()
+
+
+def test_no_map_server_set_is_a_clean_failure():
+    from simpleaprs.config import Config
+    assert Config().nomad_url == ""  # nobody's private address is baked in
+    sent = []
+    p = MapProxy("")
+    p._send = lambda h, code, body, ctype: sent.append(code)
+    p._style(None, "http://x")
+    p._proxy(type("H", (), {"path": "/nomad/x.pmtiles", "headers": {}})())
+    assert sent == [502, 502]

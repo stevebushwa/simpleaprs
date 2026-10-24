@@ -26,7 +26,7 @@ The install has two optional parts: `[gui]` (PySide6, the desktop app) and `[ser
 
 - **Radio**: sound card in/out (Qt Multimedia, no PortAudio). PTT is VOX only; "VOX lead-in"
   sets how long the preamble runs before data so VOX is open in time.
-- **Maps**: N.O.M.A.D. server URL in Settings (default http://nomad.local:8080). The app proxies
+- **Maps**: N.O.M.A.D. server URL in Settings (blank until you set it, and then there is no map, only stations). The app proxies
   its MapLibre style and PMTiles locally, since N.O.M.A.D. sends no CORS headers. Settings > "Cache map tiles" keeps what
   it fetches in `~/.cache/simpleaprs/tiles` (size-limited, least recently used goes first), so tiles load fast and the
   map still draws when the server is unreachable. A changed map file on the server drops its cached tiles.

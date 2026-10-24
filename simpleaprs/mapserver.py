@@ -63,6 +63,8 @@ class MapProxy:
 
     def _style(self, h, base: str) -> None:
         path = "/api/maps/styles"
+        if not self.nomad:  # no map server set
+            return self._send(h, 502, b"{}", "application/json")
         try:
             with urllib.request.urlopen(f"{self.nomad}{path}", timeout=10) as r:
                 body = r.read().decode()
@@ -85,6 +87,8 @@ class MapProxy:
         h.wfile.write(body)
 
     def _proxy(self, h) -> None:
+        if not self.nomad:
+            return self._send(h, 502, b"", "text/plain")
         path, rng = h.path[len("/nomad"):], h.headers.get("Range", "")
         # The first bytes of a PMTiles file (header + root directory) are always asked of the server
         # first: that is how we notice the file changed. Everything else is served from disk if we have it.
