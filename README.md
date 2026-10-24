@@ -7,6 +7,21 @@ Project N.O.M.A.D. server. Runs as a Qt desktop app, or as a terminal server wit
     uv run simpleaprs        # the desktop app; first run opens the setup dialog
     uv run pytest
 
+## Platforms
+
+| | Desktop app | Terminal server (`--headless`) |
+|---|---|---|
+| Linux | AppImage, or `pip install` | yes: Raspberry Pi and other single-board computers |
+| Windows | zip: unpack and run `simpleaprs.exe` | no |
+| macOS (Apple silicon and Intel) | zip: unpack and open `simpleaprs.app` | no |
+
+The server is Linux only on purpose: it is meant to sit on a single-board computer next to a radio. The Windows and macOS
+apps are for the other end, a computer you follow that server from (Settings > Network > Connect to another simpleaprs).
+They can also drive a radio plugged into that computer's own sound card, but that hasn't been tried on those systems yet.
+Builds come from the `build` workflow: every push builds and tests them, and pushing a tag like `v0.2.0` attaches them to a
+GitHub release. They are not code-signed, so the first launch needs one extra step: on Windows, SmartScreen's "More info"
+then "Run anyway"; on macOS, right-click the app and choose Open (or `xattr -dr com.apple.quarantine simpleaprs.app`).
+
 The install has two optional parts: `[gui]` (PySide6, the desktop app) and `[server]` (sounddevice, the terminal server).
 
 - **Radio**: sound card in/out (Qt Multimedia, no PortAudio). PTT is VOX only; "VOX lead-in"
