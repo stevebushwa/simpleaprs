@@ -5,10 +5,11 @@ import argparse
 import sys
 
 EPILOG = """\
-Headless mode shares the radio over HTTP: open the web page it prints in any browser on the network, or
-point the desktop app at it (Settings > "Connect to another simpleaprs"). There is no token, so keep it on
-a LAN or VPN. The first headless run asks a few questions and saves them; --setup asks them again. Other
-options apply to this run only, unless --save is given.
+Headless mode shares the radio over HTTP: open the web page it prints in any browser on the network. The first
+visit creates your login, and the page's Settings has everything else. Desktop apps follow it with the access
+token shown under Settings > Access (Settings > "Connect to another simpleaprs"). Keep it on a LAN or VPN: it
+is plain HTTP. --setup asks the setup questions in the terminal instead. Other options apply to this run only,
+unless --save is given.
 """
 
 
@@ -16,7 +17,8 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="simpleaprs", description="APRS with a built-in sound-card modem.",
                                  epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--headless", "--server", action="store_true", help="run in the terminal as a network server, no window")
-    ap.add_argument("--setup", action="store_true", help="(headless) go through the setup questions again")
+    ap.add_argument("--setup", action="store_true", help="(headless) answer the setup questions in the terminal (the web page's Settings does the same)")
+    ap.add_argument("--reset-login", action="store_true", help="(headless) forget the web page's login: the next visitor creates a new one")
     ap.add_argument("--list-devices", action="store_true", help="(headless) print the audio devices and exit")
     ap.add_argument("-q", "--quiet", action="store_true", help="(headless) don't print every packet heard")
     ap.add_argument("--save", action="store_true", help="(headless) keep the options below as the saved settings")
@@ -77,10 +79,14 @@ def headless(args: argparse.Namespace) -> int:
     apply_overrides(cfg, args)
     if args.symbol is not None and len(cfg.symbol) != 2:
         sys.exit("--symbol is two characters: the table (/ or \\) then the code, like /-.")
-    if args.setup or not cfg.configured:
+    if args.reset_login:
+        from .auth import Auth
+        from .config import AUTH_PATH
+        Auth(AUTH_PATH).reset()
+        print("The web page's login has been forgotten. Open the page to create a new one.")
+    if args.setup:
         if not sys.stdin.isatty():
-            sys.exit("simpleaprs is not set up yet. Run it once from a terminal to answer the setup questions,\n"
-                     "or give --callsign (and --lat/--lon) on the command line.")
+            sys.exit("--setup asks questions, so it needs a terminal. Everything it asks is also in the web page's Settings.")
         try:
             cfg = hl.setup(cfg)
         except (EOFError, KeyboardInterrupt):

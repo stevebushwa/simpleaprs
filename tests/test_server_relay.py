@@ -1,6 +1,8 @@
 import time
+from pathlib import Path
 
 from simpleaprs import aprs
+from simpleaprs.auth import Auth
 from simpleaprs.ax25 import Frame
 from simpleaprs.config import Config
 from simpleaprs.digipeater import Digipeater
@@ -86,7 +88,12 @@ def test_igate_message_for_rf_is_sent_as_relay_and_stop_silences_it():
     assert len(s.radio.sent) == 1
 
 
-def test_igate_without_passcode_refuses_to_start(capsys):
-    s = server(igate_enabled=True)
-    assert s.start() is False
-    assert "passcode" in capsys.readouterr().err
+def test_igate_without_passcode_waits_instead_of_exiting():
+    s = server(igate_enabled=True, share_port=0)
+    s.auth = Auth(Path("/nonexistent/auth.json"))
+    s.radio.start = lambda *a: True
+    try:
+        assert s.start() is True
+        assert wait_for(lambda: "passcode" in s.igate_text)
+    finally:
+        s.stop()

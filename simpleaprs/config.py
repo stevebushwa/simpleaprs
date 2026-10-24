@@ -7,6 +7,7 @@ from pathlib import Path
 
 PATH = Path.home() / ".config" / "simpleaprs" / "config.json"
 STATIONS_PATH = PATH.with_name("stations.json")
+AUTH_PATH = PATH.with_name("auth.json")  # the web page login (headless server)
 STATIONS_REMOTE_PATH = PATH.with_name("stations-remote.json")  # kept apart so a server's stations never mix with local ones
 
 

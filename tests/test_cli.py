@@ -70,3 +70,7 @@ def test_setup_gateways(monkeypatch, tmp_path):
     cfg = run_setup(monkeypatch, tmp_path, Config(callsign="N0CALL-7"), [""] * 13 + ["y", "", "calc", "y", "40", "y", "y"])
     assert cfg.igate_enabled and cfg.igate_passcode == "13023" and cfg.igate_to_rf and cfg.igate_radius_km == 40
     assert cfg.digi_enabled and cfg.digi_wide
+
+
+def test_reset_login_flag():
+    assert cli.parse(["--headless", "--reset-login"]).reset_login and not cli.parse(["--headless"]).reset_login

@@ -37,50 +37,68 @@ The install has two optional parts: `[gui]` (PySide6, the desktop app) and `[ser
 ## Terminal / Pi server
 
 `--headless` (or `--server`) runs with no window, no Qt and no display: it listens to the radio and serves a **web page**
-you open from any browser on the network (phone, laptop). Built for a Pi attached to a radio.
+you open from any browser on the network (phone, laptop). Built for a Pi attached to a radio, and set up entirely from
+that page.
 
     sudo apt install libportaudio2          # the sound library (Debian / Raspberry Pi OS)
     pipx install '/path/to/simpleaprs[server]'   # or: pip install '.[server]'  (PySide6 is not needed)
-    simpleaprs --headless                   # first run asks a few questions and saves them, then serves
-    simpleaprs --headless --setup           # go through the questions again (current values are the defaults)
+    simpleaprs --headless                   # starts straight away, even with nothing set up yet
     simpleaprs --list-devices               # audio device names, as the options below expect them
 
 (`python -m simpleaprs --headless` works too.) It prints the web address, e.g. `http://raspberrypi.local:8073/`, and logs
-packets heard and sent (`-q` hides packets). Ctrl+C stops it. Settings live in the same `~/.config/simpleaprs/config.json`
-as the desktop app, but audio device names differ between the two (PortAudio vs Qt), so run `--setup` on the Pi.
+packets heard and sent (`-q` hides packets). Ctrl+C stops it.
+
+**First visit.** The page asks you to create a login (a username and a password of 8 or more characters). Whoever opens
+it first makes the account, so do that before sharing the address. After that it asks for the login. **Remember me on this
+device** keeps you logged in for 30 days (each visit renews it); without it you are logged out when the browser closes, or
+after 12 hours. Five wrong passwords lock that address out for 30 seconds. Passwords are stored hashed (scrypt), sessions
+as hashes, in `~/.config/simpleaprs/auth.json`, readable only by you. Forgot it? `simpleaprs --headless --reset-login`
+forgets the account so the next visitor creates a new one.
+
+**Settings** is the page's last tab, and holds what the desktop app's Settings does: Station (callsign, position, symbol,
+comment, path, auto beacon), Radio (sound cards, VOX lead-in, transmit level), Map, iGate, Digipeater and Access. Changes
+take effect when you press Save: the sound card is reopened, the gateways restarted, and so on, with no restart of the
+server. If the sound card can't be opened the server keeps running and the page says why, so you can pick another. Settings
+live in `~/.config/simpleaprs/config.json`, shared with the desktop app, but audio device names differ between the two
+(PortAudio vs Qt), so choose them on the page rather than copying them over.
+
+**Desktop apps** don't log in. They follow the server with its **access token**, shown (and replaceable) under Settings >
+Access: in the desktop app, Settings > Network > Connect to another simpleaprs, with the server's address and that token.
+Changing the token cuts off apps using the old one.
 
 The page has the same map as the desktop app plus the station list, messages and raw packets, a beacon button and a message
 box. Clicking a station on the map opens its popup, and that has a **Message** button that opens the message box addressed
-to it. Below the message box is a bulletin box: pick BLN0-BLN9 and send text to everyone (a bulletin is a message to
-`BLN#` with no message number, so nobody acks it; sending the same number again replaces the old one). The desktop app has
-the same popup button and bulletin box. Bulletins heard on the air (to `BLN#`, with or without a group name) are listed in the Messages tab as
-`BLN1 from CALL: text`, once per sender and text since senders repeat them, with no ack and no alert sound. The "Show" menu
-at the top of the tab narrows the list to direct messages or bulletins (remembered between visits). The desktop app can also follow it (Settings > Connect to another simpleaprs, address only, no token).
+to it. Below the message box is a bulletin box: pick BLN0-BLN9 (or BLNX for urgent) and send text to everyone (a bulletin is
+a message to `BLN#` with no message number, so nobody acks it; sending the same number again replaces the old one). The
+desktop app has the same popup button and bulletin box. Bulletins heard on the air (to `BLN#`, with or without a group
+name) are listed in the Messages tab as `BLN1 from CALL: text`, once per sender and text since senders repeat them, with no
+ack and no alert sound. The "Show" menu at the top of the tab narrows the list to direct messages or bulletins (remembered
+between visits).
 
-**There is no login.** Anyone who can reach the port can watch and transmit through your radio, so keep it on your LAN
-or a VPN such as Tailscale, never on the internet. As a guard against *other web pages* using your browser to reach it,
-the server only answers requests addressed to an IP address, `localhost`, `*.local`, or a one-word host name, and refuses
-cross-site and non-JSON requests; if you reach it by another name, add `--allow-host that.name`. `--no-tx` makes it
-receive-only.
+**It is plain HTTP.** The login keeps other people on your network, and other web pages, out; it doesn't hide anything from
+someone who can watch the network, so keep the server on your LAN or a VPN such as Tailscale, never on the internet. As a
+guard against *other web pages* using your logged-in browser to reach it, the server only answers requests addressed to an
+IP address, `localhost`, `*.local`, or a one-word host name, and refuses cross-site and non-JSON requests; if you reach it by
+another name, add `--allow-host that.name`.
 
-Everything can also be given as options, which apply to that run only unless `--save` is added. With `--callsign` there
-are no questions, so it works from a script or a service:
+Everything on the Settings page can also be given as options, which apply to that run only unless `--save` is added, or
+asked in the terminal with `--setup`. With `--callsign` there are no questions, so it works from a script or a service:
 
     simpleaprs --headless --callsign N0CALL-7 --lat 39.50 --lon -98.35 \
         --input-device "USB Audio" --output-device "USB Audio" --nomad-url http://nomad.local:8080 --save
 
-**iGate and digipeater** on the server: `--setup` asks about them, or use `--igate --igate-passcode CODE` (plus
+**iGate and digipeater** on the server: turn them on in Settings, or use `--igate --igate-passcode CODE` (plus
 `--igate-server HOST:PORT`, `--igate-to-rf`, `--igate-radius KM`) and `--digipeater fill|wide|off`; `--no-igate` etc. turn them
-off again for a run. The startup banner shows what is on, and a line is logged whenever the iGate connects or drops. It won't
-start with `--igate` and no passcode. These transmit (digipeating, and internet messages to RF) on their own account:
-`--no-tx` only stops the web page and clients from transmitting, it does not turn them off. Packets the server repeats or gates
-to RF are marked "relayed" in the feed, so a desktop app following the server doesn't list them as your own messages.
+off again for a run. The startup banner shows what is on, and a line is logged whenever the iGate connects or drops (the page
+shows it too). These transmit (digipeating, and internet messages to RF) on their own account: `--no-tx` (or "Let the web
+page and desktop apps transmit" in Access) only stops the web page and clients from transmitting, it does not turn them off.
+Packets the server repeats or gates to RF are marked "relayed" in the feed, so a desktop app following the server doesn't
+list them as your own messages.
 
 Other options: `--symbol --comment --path --lead-ms --beacon-minutes --port --no-tx --allow-host` (see `--help`). A device
-name is matched exactly or as part of the full name, and one that isn't found is an error rather than a silent fall back
-to the default. Map tiles are cached like in the desktop app (`~/.cache/simpleaprs/tiles`).
+name is matched exactly or as part of the full name. Map tiles are cached like in the desktop app (`~/.cache/simpleaprs/tiles`).
 
-To start it at boot, run it as a user service once it has been set up from a terminal:
+To start it at boot, run it as a user service (it needs no setup first, and the page does the rest):
 
     # ~/.config/systemd/user/simpleaprs.service
     [Service]

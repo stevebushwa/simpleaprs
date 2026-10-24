@@ -137,8 +137,16 @@ from simpleaprs.netshare import host_ok
 
 
 class FakeWeb:
+    protected = False
+
     def __init__(self):
         self.hub = Hub()
+
+    def session_ok(self, h):
+        return True
+
+    def handle_post(self, h):
+        return False
 
     def intro(self):
         return [{"type": "me", "call": "N0CALL"}]

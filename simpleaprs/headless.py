@@ -14,7 +14,9 @@ import time
 
 from . import aprs
 from .ax25 import Frame
-from .config import PATH, STATIONS_PATH, Config
+from . import webconfig
+from .auth import Auth
+from .config import AUTH_PATH, PATH, STATIONS_PATH, Config
 from .digipeater import Digipeater
 from .igate import IGate, passcode
 from .mapserver import MapProxy
@@ -133,8 +135,13 @@ def setup(cfg: Config) -> Config:
 # --- the server -----------------------------------------------------------------------------------
 
 class Server:
-    def __init__(self, cfg: Config, quiet: bool = False, allowed_hosts: tuple[str, ...] = ()) -> None:
+    def __init__(self, cfg: Config, quiet: bool = False, allowed_hosts: tuple[str, ...] = (), auth: Auth | None = None) -> None:
         self.cfg, self.quiet, self.allowed_hosts = cfg, quiet, allowed_hosts
+        self.auth = auth or Auth(AUTH_PATH)
+        self.web: WebUI | None = None
+        self.radio_note = "Not started"  # "" while the radio is listening, else what is wrong with it
+        self.igate_text = ""
+        self.settings_lock = threading.RLock()
         self.hub = Hub()      # raw frames, for desktop clients
         self.web_hub = Hub()  # decoded events, for browsers
         self.tracker = Tracker(cfg, self._emit, self.transmit, STATIONS_PATH)
@@ -148,46 +155,140 @@ class Server:
 
     def start(self) -> bool:
         c = self.cfg
-        for label, name, inputs in (("input", c.input_device, True), ("output", c.output_device, False)):
-            if name and find_device(name, inputs) is None:  # the desktop app quietly uses the default; a server nobody watches shouldn't
-                print(f"Audio {label} device '{name}' not found. Run --list-devices to see what is available.", file=sys.stderr)
-                return False
-        if c.igate_enabled and not c.igate_passcode:
-            print("The iGate needs the APRS-IS passcode for your callsign. Run again with --setup, or give --igate-passcode.", file=sys.stderr)
-            return False
         self.tracker.load()
         cache = TileCache(max_bytes=c.map_cache_mb * 1024 * 1024) if c.map_cache else None
-        web = WebUI(self.web_hub, self.tracker, MapProxy(c.nomad_url, cache), c.share_allow_tx)
-        try:
-            self.share = ShareServer(self.hub, c.share_port, "", False, c.share_allow_tx, self._hello, self.remote_tx,
-                                     snapshot=self.tracker.data, web=web, open_access=True, allowed_hosts=self.allowed_hosts)
+        self.web = WebUI(self.web_hub, self.tracker, MapProxy(c.nomad_url, cache), c.share_allow_tx, self.auth, self)
+        try:  # desktop apps follow with the access token; the web page has its login
+            self.share = ShareServer(self.hub, c.share_port, self.auth.api_token, True, c.share_allow_tx, self._hello, self.remote_tx,
+                                     snapshot=self.tracker.data, web=self.web, allowed_hosts=self.allowed_hosts)
         except OSError as e:
             print(f"Cannot listen on port {c.share_port}: {e}", file=sys.stderr)
             return False
-        if not self.radio.start(c.input_device, c.output_device):
-            print("No audio input found. Run again with --setup to pick a device, or --list-devices to see them.", file=sys.stderr)
-            self.share.stop()
-            return False
-        if c.digi_enabled:
-            self.digi = Digipeater(c.callsign, c.digi_wide)
-        if c.igate_enabled:
-            self.igate = IGate(c, self._igate_status, self.igate_to_rf)
-            self.igate.start()
+        self._open_radio()
+        self._start_gateways()
         addr = f"{lan_ip()}:{self.share.port}"
-        print(f"simpleaprs server for {c.callsign} listening for packets")
+        print(f"simpleaprs server" + (f" for {c.callsign}" if c.callsign else ""))
         print(f"  Web page       http://{addr}/")
-        print(f"  Desktop app    Settings > Connect to another simpleaprs > {addr} (no token)")
+        if not self.auth.configured:
+            print("                 Open it to create your login and finish setting up")
+        elif not c.callsign:
+            print("                 Log in and open Settings to enter your callsign")
+        print(f"  Desktop app    Settings > Connect to another simpleaprs > {addr}, with the access token from the web page's Settings > Access")
+        print(f"  Radio          " + (self.radio_note or "listening for packets"))
         print(f"  Transmitting   " + ("allowed from the web page and clients" if c.share_allow_tx else "off"))
         if self.igate:
             print(f"  iGate          to {c.igate_server}" + (f", and messages for stations heard here back to RF (within {c.igate_radius_km} km)" if c.igate_to_rf else ""))
         if self.digi:
             print("  Digipeater     " + ("wide-area (WIDE1-1, WIDE2-N)" if c.digi_wide else "fill-in (WIDE1-1)") + f" and {c.callsign}")
-        print("  Anyone who can reach this port can use it: keep it on your LAN or a VPN.")
+        print("  Traffic is plain HTTP: keep it on your LAN or a VPN, never the open internet.")
         print("  Ctrl+C to stop\n", flush=True)
         now = time.monotonic()
         self.next_save = now + 30
         self.next_beacon = now + c.beacon_minutes * 60 if c.beacon_minutes else 0.0
         return True
+
+    # --- radio and gateways: started at launch and again whenever Settings changes them ------------------
+
+    def _open_radio(self) -> None:
+        """(Re)open the sound card. Failing is not fatal: the page says what is wrong and Settings can fix it."""
+        c = self.cfg
+        try:
+            missing = next((f"audio {label} device '{name}' not found" for label, name, inputs in
+                            (("input", c.input_device, True), ("output", c.output_device, False))
+                            if name and find_device(name, inputs) is None), "")
+            self.radio_note = missing or ("" if self.radio.start(c.input_device, c.output_device) else "no audio input found")
+        except SystemExit as e:  # sounddevice / PortAudio isn't installed
+            self.radio_note = str(e).splitlines()[0]
+        if self.radio_note:
+            self.radio.stop()
+            log(f"Radio not listening: {self.radio_note}. Choose devices in the web page's Settings > Radio.")
+
+    def _start_gateways(self) -> None:
+        c = self.cfg
+        self.digi = Digipeater(c.callsign, c.digi_wide) if c.digi_enabled and c.callsign else None
+        self.igate = None
+        if c.igate_enabled and c.callsign:
+            self.igate = IGate(c, self._igate_status, self.igate_to_rf)
+            self.igate.start()
+        else:
+            self.igate_text = ""
+
+    def _stop_gateways(self) -> None:
+        if self.igate:
+            self.igate.stop()
+            self.igate = None
+        self.digi = None
+
+    def status(self) -> dict:
+        return {"radio": self.radio_note or "Listening", "radio_ok": not self.radio_note, "igate": self.igate_text,
+                "digi": self.digi is not None, "configured": bool(self.cfg.callsign), "needs_login": not self.auth.configured}
+
+    def status_event(self) -> dict:
+        return {"type": "status", **self.status()}
+
+    def _publish_status(self) -> None:
+        self.web_hub.publish(self.status_event(), False)
+
+    # --- what the web page's Settings shows and changes -----------------------------------------------
+
+    def _devices(self) -> tuple[list[str], list[str]]:
+        try:
+            return device_names(True), device_names(False)
+        except SystemExit:
+            return [], []
+
+    def settings_view(self) -> dict:
+        inputs, outputs = self._devices()
+        fields = webconfig.fields(inputs, outputs, self.cfg.symbol)
+        return {"groups": webconfig.GROUPS, "fields": [vars(f) for f in fields],
+                "values": {f.key: getattr(self.cfg, f.key) for f in fields}, "status": self.status()}
+
+    def settings_apply(self, changes) -> dict:
+        """Check and apply changes from the page. Returns {setting: problem}, empty if it all went through."""
+        with self.settings_lock:
+            inputs, outputs = self._devices()
+            clean, errors = webconfig.validate(changes, self.cfg, inputs, outputs)
+            if errors:
+                return errors
+            c = self.cfg
+            changed = {k for k, v in clean.items() if getattr(c, k) != v}
+            for k in changed:
+                setattr(c, k, clean[k])
+            if changed:
+                c.save()
+            self._apply(changed)
+        return {}
+
+    def _apply(self, changed: set[str]) -> None:
+        c = self.cfg
+        if changed & {"input_device", "output_device"} or self.radio_note:  # also a retry, e.g. after plugging a sound card in
+            self._open_radio()
+        if changed & {"nomad_url", "map_cache", "map_cache_mb"} and self.web:
+            p = self.web.proxy
+            p.nomad = c.nomad_url.rstrip("/")
+            if not c.map_cache:
+                p.cache = None
+            elif p.cache is None:
+                p.cache = TileCache(max_bytes=c.map_cache_mb * 1024 * 1024)
+            else:
+                p.cache.max_bytes = c.map_cache_mb * 1024 * 1024
+                p.cache.trim()
+        if "share_allow_tx" in changed and self.share and self.web:
+            self.share.allow_tx = self.web.allow_tx = c.share_allow_tx
+        if changed & {"callsign", "symbol", "comment", "igate_enabled", "igate_server", "igate_passcode", "igate_to_rf",
+                      "igate_radius_km", "lat", "lon", "digi_enabled", "digi_wide"}:
+            self._stop_gateways()
+            self._start_gateways()
+        if "beacon_minutes" in changed:
+            self.next_beacon = time.monotonic() + c.beacon_minutes * 60 if c.beacon_minutes else 0.0
+        if changed & {"callsign", "lat", "lon", "symbol", "comment", "path", "share_allow_tx"}:
+            self.web_hub.publish(self.tracker.me_event(c.share_allow_tx), False)
+        self._publish_status()
+
+    def api_token_changed(self, token: str) -> None:
+        """A new account or a new token: desktop apps must use it from now on."""
+        if self.share:
+            self.share.token = token
 
     def tick(self) -> None:
         """Called about once a second: auto beacon and saving what we have heard."""
@@ -201,8 +302,7 @@ class Server:
 
     def stop(self) -> None:
         self.stopping = True
-        if self.igate:
-            self.igate.stop()
+        self._stop_gateways()
         self.tracker.save()
         self.radio.stop()
         if self.share:
@@ -236,10 +336,12 @@ class Server:
             threading.Timer(random.uniform(0.3, 1.5), self.send_frame, (out, True)).start()
 
     def _igate_status(self, text: str) -> None:
+        self.igate_text = text
         head = text.split(" - ")[0]  # the part before the running count: only a change of state is worth a line
         if head != self._igate_state:
             self._igate_state = head
             log(text)
+            self._publish_status()
 
     def igate_to_rf(self, raw: bytes) -> None:
         """The iGate wants a message from the internet put on the air."""
@@ -254,7 +356,7 @@ class Server:
     def send_frame(self, frame: Frame, relay: bool = False) -> None:
         """Put a frame on the air. relay: it is someone else's packet that we are passing on (digipeating or
         gating), which clients following this radio must not show as our own message."""
-        if self.stopping:
+        if self.stopping or not self.cfg.callsign:
             return
         c = self.cfg
         raw = frame.encode()
@@ -264,7 +366,7 @@ class Server:
 
     def beacon(self) -> None:
         c = self.cfg
-        if c.lat or c.lon:
+        if c.callsign and (c.lat or c.lon):
             self.transmit(aprs.build_position(c.lat, c.lon, c.symbol, c.comment))
 
     def remote_tx(self, req: dict) -> None:
@@ -278,8 +380,8 @@ class Server:
             self.transmit(aprs.build_message(req["to"], req["text"], msg_id))
 
 
-def run(cfg: Config, quiet: bool = False, allowed_hosts: tuple[str, ...] = ()) -> int:
-    server = Server(cfg, quiet, allowed_hosts)
+def run(cfg: Config, quiet: bool = False, allowed_hosts: tuple[str, ...] = (), auth: Auth | None = None) -> int:
+    server = Server(cfg, quiet, allowed_hosts, auth)
     if not server.start():
         return 1
     stop = threading.Event()

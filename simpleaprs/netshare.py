@@ -8,9 +8,11 @@ POST /api/tx      Ask the server to beacon, or send a message or bulletin, throu
 Clients get frames, not decoded packets, so they run the same code on them as the radio would.
 
 A server can also carry a web page (see webui.py): GET /web/events is the same kind of stream but of
-decoded events, and the page itself and its map files are served from the same port. Such a server runs
-in "open access" mode, for a LAN: no token, but requests must look like they came from a page on this
-server (right Host, same Origin, JSON body) so a web page elsewhere can't make your browser use it.
+decoded events, and the page itself and its map files are served from the same port. The page is guarded
+by a login (a session cookie, see auth.py) while desktop apps keep using the token on /api/*. Either way,
+requests to such a server must look like they came from a page on it (right Host, same Origin, JSON body)
+so a web page elsewhere can't make your browser use it. The older "open access" mode skips the login and the
+token both, for a LAN.
 """
 from __future__ import annotations
 
@@ -152,20 +154,43 @@ class ShareServer:
                     return True
                 auth = self.headers.get("Authorization", "")
                 got = auth[7:] if auth.startswith("Bearer ") else ""
-                return bool(outer.token) and hmac.compare_digest(got.encode(), outer.token.encode())
+                if bool(outer.token) and hmac.compare_digest(got.encode(), outer.token.encode()):
+                    return True
+                return bool(web and web.session_ok(self))  # the logged-in web page
 
-            def _reply(self, code: int, obj, ctype: str = "application/json") -> None:
+            def _reply(self, code: int, obj, ctype: str = "application/json", headers: tuple = ()) -> None:
                 body = obj.encode() if isinstance(obj, str) else json.dumps(obj).encode()
                 self.send_response(code)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(body)))
+                for k, v in headers:
+                    self.send_header(k, v)
                 self.end_headers()
                 self.wfile.write(body)
+
+            def read_json(self, limit: int = 2048):
+                """The request's JSON body, or None after replying with the problem."""
+                n = int(self.headers.get("Content-Length", "0"))
+                if not 0 < n <= limit:
+                    self._reply(400, {"error": "bad request"})
+                    return None
+                try:
+                    return json.loads(self.rfile.read(n))
+                except ValueError:
+                    self._reply(400, {"error": "bad request"})
+                    return None
+
+            def cookie(self, name: str) -> str:
+                for part in self.headers.get("Cookie", "").split(";"):
+                    k, _, v = part.strip().partition("=")
+                    if k == name:
+                        return v
+                return ""
 
             def _from_here(self, post: bool = False) -> bool:
                 """In open access mode, only requests that came from a page on this server (or no browser
                 at all) get through. Replies with the reason if not."""
-                if not outer.open_access:
+                if not (outer.open_access or (web and web.protected)):
                     return True
                 if not host_ok(self.headers.get("Host", ""), outer.allowed_hosts):
                     self._reply(403, {"error": "unknown host name: use this server's IP address, or start it with --allow-host"})
@@ -184,7 +209,9 @@ class ShareServer:
                     if self.path == "/api/events":
                         self._events()
                     elif self.path == "/web/events" and web:
-                        self._stream(web.hub, web.intro)
+                        if not web.session_ok(self):
+                            return self._reply(401, {"error": "login required"})
+                        self._stream(web.hub, web.intro, lambda: web.session_ok(self))
                     elif web and web.handle(self):
                         pass
                     elif self.path == "/":
@@ -203,8 +230,9 @@ class ShareServer:
                     return [{"hello": {**hello(), "allow_tx": outer.allow_tx}}] + ([{"snapshot": snap}] if snap else [])
                 self._stream(outer.hub, intro)
 
-            def _stream(self, hub: Hub, intro) -> None:
-                """Server-Sent Events: intro() first, then hub's replay, a sync marker, then live events."""
+            def _stream(self, hub: Hub, intro, alive=lambda: True) -> None:
+                """Server-Sent Events: intro() first, then hub's replay, a sync marker, then live events.
+                The stream ends when alive() says no (the viewer logged out)."""
                 if hub.count() >= MAX_CLIENTS:
                     return self._reply(503, {"error": "too many clients"})
                 q, backlog = hub.subscribe()
@@ -219,7 +247,7 @@ class ShareServer:
                         self._send(ev)
                     self._send({"sync": True})
                     idle = 0
-                    while not outer.stopped and hub.subscribed(q):
+                    while not outer.stopped and hub.subscribed(q) and alive():
                         try:
                             self._send(q.get(timeout=1))
                             idle = 0
@@ -243,6 +271,8 @@ class ShareServer:
                     if not self._from_here(post=True):
                         return
                     if self.path != "/api/tx":
+                        if web and web.handle_post(self):
+                            return
                         return self._reply(404, {"error": "not found"})
                     if not self._token_ok():  # never open because of the view setting; only open access mode turns the token off
                         return self._reply(401, {"error": "access token required"})

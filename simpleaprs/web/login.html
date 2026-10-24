@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>simpleaprs - log in</title>
+<style>
+  :root { --bg: #f3f3f5; --card: #fff; --fg: #1d1d1f; --dim: #6b6b70; --line: #d8d8dc; --accent: #3367d6; --err: #c33; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151517; --card: #1b1b1e; --fg: #e8e8ea; --dim: #9a9aa0; --line: #38383d; --accent: #7aa2ff; --err: #ff7a7a; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
+  body { display: grid; place-items: center; min-height: 100vh; padding: 16px; }
+  form { width: 100%; max-width: 340px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 22px; }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  p { margin: 0 0 16px; color: var(--dim); }
+  label.t { display: block; margin: 12px 0 4px; font-weight: 600; }
+  input[type=text], input[type=password] { width: 100%; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .remember { display: flex; gap: 8px; align-items: center; margin: 14px 0; color: var(--dim); }
+  button { width: 100%; font: inherit; color: #fff; background: var(--accent); border: 0; border-radius: 6px; padding: 9px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #err { color: var(--err); min-height: 1.3em; margin-top: 10px; }
+  [hidden] { display: none; }
+</style>
+<form id="f" autocomplete="on">
+  <h1 id="title">simpleaprs</h1>
+  <p id="sub">&nbsp;</p>
+  <label class="t" for="u">Username</label>
+  <input id="u" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+  <label class="t" for="p">Password</label>
+  <input id="p" type="password" autocomplete="current-password" required>
+  <div id="again" hidden>
+    <label class="t" for="p2">Password again</label>
+    <input id="p2" type="password" autocomplete="new-password">
+  </div>
+  <label class="remember"><input id="remember" type="checkbox"> Remember me on this device</label>
+  <button id="go">Log in</button>
+  <div id="err"></div>
+</form>
+<script>
+  const $ = id => document.getElementById(id);
+  let setup = false;
+  fetch("/api/auth/state").then(r => r.json()).then(s => {
+    if (s.logged_in) return location.replace("/");
+    setup = s.setup;
+    $("title").textContent = setup ? "Create your login" : "Log in";
+    $("sub").textContent = setup ? "This is the first visit to this server. Choose the login it will ask for from now on." : "simpleaprs";
+    $("again").hidden = !setup;
+    $("p2").required = setup;
+    $("p").autocomplete = setup ? "new-password" : "current-password";
+    $("go").textContent = setup ? "Create login" : "Log in";
+    $("u").focus();
+  }).catch(() => { $("err").textContent = "Could not reach the server."; });
+  $("f").onsubmit = async e => {
+    e.preventDefault();
+    $("err").textContent = "";
+    if (setup && $("p").value !== $("p2").value) { $("err").textContent = "The two passwords don't match."; return; }
+    $("go").disabled = true;
+    try {
+      const r = await fetch(setup ? "/api/setup" : "/api/login", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({username: $("u").value, password: $("p").value, remember: $("remember").checked})});
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) return location.replace("/");
+      $("err").textContent = j.error || `The server answered ${r.status}`;
+    } catch { $("err").textContent = "Could not reach the server."; }
+    $("go").disabled = false;
+  };
+</script>
+</html>

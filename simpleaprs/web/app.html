@@ -51,6 +51,25 @@
   button.act:disabled, input:disabled { opacity: .5; cursor: default; }
   #to { width: 105px; } #text, #btext { flex: 1; min-width: 0; }
   #send { border-top: 0; padding-bottom: 0; } #bulletin { padding-top: 6px; }
+  button.ghost { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; cursor: pointer; }
+  button.ghost.danger { color: #c33; }
+  #settings { padding: 10px 12px; }
+  .sub { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+  .sub button { border: 1px solid var(--line); background: none; color: var(--dim); border-radius: 14px; padding: 3px 11px; font: inherit; cursor: pointer; }
+  .sub button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .fld { margin: 0 0 13px; }
+  .fld > label.t { display: block; margin-bottom: 3px; font-weight: 600; }
+  .fld input[type=text], .fld input[type=number], .fld input[type=password], .fld select { width: 100%; }
+  .fld .check { display: flex; gap: 7px; align-items: flex-start; font-weight: 600; }
+  .fld .check input { margin-top: 3px; }
+  .fld .row { display: flex; gap: 6px; align-items: center; }
+  .fld .unit { color: var(--dim); white-space: nowrap; }
+  .hint { color: var(--dim); font-size: 12px; margin-top: 3px; }
+  .err { color: #c33; font-size: 12px; margin-top: 3px; }
+  .savebar { display: flex; gap: 10px; align-items: center; margin-top: 4px; position: sticky; bottom: 0; background: var(--bg); padding: 8px 0; }
+  .notice { background: var(--bar); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; }
+  h3 { margin: 18px 0 8px; font-size: 14px; }
+  #igate { color: var(--dim); }
   @media (max-width: 800px) {
     main { grid-template-columns: 1fr; grid-template-rows: 48% 1fr; }
     aside { border-left: 0; border-top: 1px solid var(--line); }
@@ -58,16 +77,18 @@
 </style>
 <header>
   <span class="dot" id="conn"></span><h1 id="title">simpleaprs</h1><span id="status">Connecting...</span>
+  <span id="igate"></span>
   <span class="grow"></span>
   <label>Show <select id="filter">
     <option value="all">All stations</option><option value="weather">Weather stations</option><option value="igate">iGates</option>
     <option value="digi">Digipeaters</option><option value="mobile">Mobile (vehicles, aircraft, boats)</option></select></label>
   <button class="act" id="beacon" disabled>Beacon now</button>
+  <button class="ghost" id="logout" hidden>Log out</button>
 </header>
 <main>
   <div id="mapbox"><div id="map"></div><div id="msg"></div></div>
   <aside>
-    <nav><button data-tab="stations" class="on">Stations</button><button data-tab="messages">Messages</button><button data-tab="packets">Raw packets</button></nav>
+    <nav><button data-tab="stations" class="on">Stations</button><button data-tab="messages">Messages</button><button data-tab="packets">Raw packets</button><button data-tab="settings">Settings</button></nav>
     <div class="tab" id="stations"><table><thead><tr><th>Station</th><th>Heard</th><th>Position</th><th>Comment</th></tr></thead><tbody id="rows"></tbody></table></div>
     <div class="tab col" id="messages" hidden>
       <div class="bar"><label>Show <select id="mfilter"><option value="all">All messages</option><option value="direct">Direct messages</option><option value="bulletin">Bulletins</option></select></label></div>
@@ -78,6 +99,7 @@
         <input id="btext" placeholder="Bulletin (max 67 chars)" maxlength="67"><button class="act" disabled>Send bulletin</button></form>
     </div>
     <div class="tab col" id="packets" hidden><div class="log" id="pkts"></div></div>
+    <div class="tab" id="settings" hidden></div>
   </aside>
 </main>
 <script src="maplibre-gl.js"></script>
@@ -99,8 +121,9 @@
     for (const t of document.querySelectorAll(".tab")) t.hidden = t.id !== b.dataset.tab;
     store.set("tab", b.dataset.tab);
     for (const l of document.querySelectorAll(".log")) l.scrollTop = l.scrollHeight;
+    if (b.dataset.tab === "settings") loadSettings();
   };
-  const saved = store.get("tab"); if (saved) document.querySelector(`nav button[data-tab=${saved}]`)?.click();
+  const toLogin = () => { location.href = "/login"; };
 
   // stations
   const stations = {};  // call -> {ev, tr}
@@ -148,6 +171,140 @@
     if (stick) box.scrollTop = box.scrollHeight;
   };
 
+  // settings: the form is drawn from what the server says its settings are, so the two can't disagree
+  let schema = null, values = {}, original = {}, group = "Station", settingsErr = {}, settingsMsg = "";
+  const mk = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+  const api = async (path, body) => {
+    const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    if (r.status === 401 && !path.startsWith("/api/login")) { toLogin(); throw new Error("login required"); }
+    return {ok: r.ok, status: r.status, body: await r.json().catch(() => ({}))};
+  };
+  const loadSettings = async () => {
+    try {
+      const r = await api("/api/settings");
+      if (!r.ok) return;
+      schema = r.body; values = {...schema.values}; original = {...schema.values}; settingsErr = {}; settingsMsg = "";
+      renderSettings();
+    } catch {}
+  };
+  const field = f => {
+    const box = mk("div", {className: "fld"});
+    const err = mk("div", {className: "err", textContent: settingsErr[f.key] || ""});
+    const hint = f.hint ? mk("div", {className: "hint", textContent: f.hint}) : null;
+    let ctl;
+    if (f.kind === "bool") {
+      const cb = mk("input", {type: "checkbox", checked: !!values[f.key]});
+      cb.onchange = () => { values[f.key] = cb.checked; renderSettings(); };
+      box.append(mk("label", {className: "check"}, cb, f.label), ...(hint ? [hint] : []), err);
+      return box;
+    }
+    if (f.kind === "select") {
+      ctl = mk("select");
+      for (const [v, label] of f.options) ctl.append(mk("option", {value: v, textContent: label}));
+      ctl.value = values[f.key];
+      ctl.onchange = () => { values[f.key] = ctl.value; };
+    } else if (f.kind === "number") {
+      ctl = mk("input", {type: "number", min: f.lo, max: f.hi, step: f.step, value: values[f.key]});
+      ctl.oninput = () => { values[f.key] = ctl.value === "" ? null : Number(ctl.value); };
+    } else {
+      ctl = mk("input", {type: "text", value: values[f.key] ?? "", placeholder: f.placeholder || "", autocomplete: "off", spellcheck: false});
+      ctl.oninput = () => { values[f.key] = ctl.value; };
+    }
+    const row = mk("div", {className: "row"}, ctl);
+    if (f.unit) row.append(mk("span", {className: "unit", textContent: f.unit}));
+    if (f.key === "igate_passcode") {
+      const calc = mk("button", {type: "button", className: "ghost", textContent: "Calculate"});
+      calc.onclick = async () => {
+        const r = await api("/api/passcode?call=" + encodeURIComponent(values.callsign || ""));
+        if (r.body.passcode) { values.igate_passcode = r.body.passcode; renderSettings(); }
+        else { settingsErr.igate_passcode = "Enter your callsign first (Station)."; renderSettings(); }
+      };
+      row.append(calc);
+    }
+    box.append(mk("label", {className: "t", textContent: f.label}), row, ...(hint ? [hint] : []), err);
+    return box;
+  };
+  const renderSettings = () => {
+    const root = $("settings");
+    const keep = root.scrollTop;
+    root.textContent = "";
+    if (!schema) return;
+    if (!schema.status.configured) root.append(mk("div", {className: "notice", textContent: "Welcome. Enter your callsign and position under Station, pick the radio's sound card under Radio, then press Save."}));
+    const sub = mk("div", {className: "sub"});
+    for (const g of schema.groups) {
+      const b = mk("button", {type: "button", textContent: g, className: g === group ? "on" : ""});
+      b.onclick = () => { group = g; renderSettings(); };
+      sub.append(b);
+    }
+    root.append(sub);
+    for (const f of schema.fields) if (f.group === group && (!f.shows_if || values[f.shows_if])) root.append(field(f));
+    if (group === "Radio") root.append(mk("div", {className: "hint", textContent: "Radio now: " + schema.status.radio}));
+    if (group === "iGate" && schema.status.igate) root.append(mk("div", {className: "hint", textContent: schema.status.igate}));
+    if (group === "Access") root.append(accountBox());
+    const save = mk("button", {className: "act", textContent: "Save"});
+    save.onclick = saveSettings;
+    root.append(mk("div", {className: "savebar"}, save, mk("span", {className: settingsErr[""] ? "err" : "hint", textContent: settingsErr[""] || settingsMsg})));
+    root.scrollTop = keep;
+  };
+  const saveSettings = async () => {
+    const changes = {};
+    for (const k of Object.keys(values)) if (JSON.stringify(values[k]) !== JSON.stringify(original[k])) changes[k] = values[k];
+    if (!Object.keys(changes).length) { settingsMsg = "Nothing changed"; settingsErr = {}; return renderSettings(); }
+    const r = await api("/api/settings", {changes});
+    if (!r.ok) {
+      settingsErr = r.body.errors || {"": `The server answered ${r.status}`};
+      const bad = schema.fields.find(f => settingsErr[f.key]);
+      if (bad) group = bad.group;
+      settingsMsg = "";
+      return renderSettings();
+    }
+    const mapChanged = ["nomad_url", "map_cache"].some(k => k in changes);
+    original = {...values}; settingsErr = {}; settingsMsg = "Saved";
+    schema.status = r.body.status;
+    renderSettings();
+    if (mapChanged) setTimeout(() => location.reload(), 600);  // the map style comes from the map server
+  };
+  // Access: the account, the token desktop apps use, and logging out
+  const accountBox = () => {
+    const box = mk("div", {});
+    box.append(mk("h3", {textContent: "Account"}));
+    const info = mk("div", {className: "hint", textContent: "Loading..."});
+    const token = mk("input", {type: "text", readOnly: true});
+    const copy = mk("button", {type: "button", className: "ghost", textContent: "Copy"});
+    copy.onclick = () => { token.select(); try { navigator.clipboard.writeText(token.value); } catch { document.execCommand("copy"); } };
+    const fresh = mk("button", {type: "button", className: "ghost", textContent: "New token"});
+    fresh.onclick = async () => {
+      if (!confirm("Desktop apps using the old token will stop connecting until you give them the new one. Continue?")) return;
+      token.value = (await api("/api/account/token", {})).body.api_token || token.value;
+    };
+    api("/api/account").then(r => { info.textContent = "Logged in as " + r.body.username; token.value = r.body.api_token; }).catch(() => {});
+    const tf = mk("div", {className: "fld", style: "margin-top: 10px"}, mk("label", {className: "t", textContent: "Access token for desktop apps"}), mk("div", {className: "row"}, token, copy, fresh),
+      mk("div", {className: "hint", textContent: "In the desktop app: Settings > Network > Connect to another simpleaprs, with this server's address and this token."}));
+    const cur = mk("input", {type: "password", autocomplete: "current-password", placeholder: "Current password"});
+    const n1 = mk("input", {type: "password", autocomplete: "new-password", placeholder: "New password (8 or more characters)"});
+    const n2 = mk("input", {type: "password", autocomplete: "new-password", placeholder: "New password again"});
+    const pmsg = mk("div", {className: "hint"});
+    const change = mk("button", {type: "button", className: "ghost", textContent: "Change password"});
+    change.onclick = async () => {
+      if (n1.value !== n2.value) { pmsg.className = "err"; pmsg.textContent = "The two new passwords don't match."; return; }
+      const r = await api("/api/account/password", {current: cur.value, new: n1.value});
+      pmsg.className = r.ok ? "hint" : "err";
+      pmsg.textContent = r.ok ? "Password changed. Other devices have been logged out." : r.body.error;
+      if (r.ok) cur.value = n1.value = n2.value = "";
+    };
+    const pf = mk("div", {className: "fld"}, mk("label", {className: "t", textContent: "Change password"}), mk("div", {}, cur), mk("div", {style: "margin-top:6px"}, n1),
+      mk("div", {style: "margin-top:6px"}, n2), mk("div", {style: "margin-top:6px"}, change), pmsg);
+    const out = mk("button", {type: "button", className: "ghost", textContent: "Log out"});
+    out.onclick = logOut;
+    const all = mk("button", {type: "button", className: "ghost danger", textContent: "Log out everywhere"});
+    all.onclick = async () => { if (confirm("Log out every device, including this one?")) { await api("/api/account/logout-all", {}); toLogin(); } };
+    box.append(info, tf, pf, mk("div", {className: "row"}, out, all));
+    return box;
+  };
+  const logOut = async () => { try { await api("/api/logout", {}); } catch {} toLogin(); };
+  $("logout").onclick = logOut;
+  fetch("/api/auth/state").then(r => r.ok ? r.json() : null).then(s => { if (s) $("logout").hidden = false; }).catch(() => {});  // only a login-protected server has one
+
   // messages: direct ones and bulletins share the log; the filter just hides one kind
   const showMsgs = kind => { $("msgs").dataset.show = kind; $("mfilter").value = kind; $("msgs").scrollTop = $("msgs").scrollHeight; };
   $("mfilter").onchange = e => { store.set("mfilter", e.target.value); showMsgs(e.target.value); };
@@ -157,10 +314,15 @@
   let allowTx = false, centered = false, me = null;
   const setBusy = () => { for (const el of [$("beacon"), $("send").querySelector("button"), $("bulletin").querySelector("button")]) el.disabled = !allowTx; };
   const say = (text, ms = 6000) => { $("status").textContent = text; clearTimeout(say.t); if (ms) say.t = setTimeout(idle, ms); };
-  const idle = () => { $("status").textContent = me ? (allowTx ? "Listening" : "Listening (view only)") : "Connecting..."; };
+  let radio = {ok: true, text: ""}, igateText = "", welcomed = false;
+  const idle = () => {
+    $("status").textContent = !me ? "Connecting..." : !radio.ok ? `No radio: ${radio.text} (see Settings)` : allowTx ? "Listening" : "Listening (view only)";
+    $("igate").textContent = igateText;
+  };
   const post = async body => {
     try {
       const r = await fetch("/api/tx", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+      if (r.status === 401) return toLogin();
       const j = await r.json().catch(() => ({}));
       say(r.ok ? "Sent" : `Server refused: ${j.error || r.status}`);
       return r.ok;
@@ -189,22 +351,31 @@
     switch (ev.type) {
       case "me":
         me = ev; allowTx = ev.allow_tx;
-        $("title").textContent = ev.call;
-        document.title = `${ev.call} - simpleaprs`;
+        $("title").textContent = ev.call || "simpleaprs";
+        document.title = `${ev.call || "simpleaprs"} - simpleaprs`;
         setBusy(); idle();
         if (ev.lat || ev.lon) {
           onMap("setStation", ev.call, ev.lat, ev.lon, ev.call, true, ev.info, false, ev.icon, "me");
           if (!centered) { centered = true; onMap("centerOn", ev.lat, ev.lon, 9); }
         }
         break;
+      case "status":
+        radio = {ok: ev.radio_ok, text: ev.radio}; igateText = ev.igate || ""; idle();
+        if (!ev.configured && !welcomed) { welcomed = true; document.querySelector("nav button[data-tab=settings]").click(); }
+        if (schema) { schema.status = ev; if (!$("settings").hidden && ["Radio", "iGate"].includes(group)) renderSettings(); }
+        break;
       case "station": onStation(ev); break;
       case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); break;
       case "message": addLine($("msgs"), ev.t, ev.text, ev.kind || "direct"); break;
     }
   };
+  const savedTab = store.get("tab"); if (savedTab) document.querySelector(`nav button[data-tab=${savedTab}]`)?.click();
   const es = new EventSource("/web/events");
   es.onopen = () => { $("conn").classList.add("on"); $("msgs").textContent = ""; $("pkts").textContent = ""; };  // the server replays them
-  es.onerror = () => { $("conn").classList.remove("on"); say("Connection lost, retrying...", 0); };
+  es.onerror = () => {
+    $("conn").classList.remove("on"); say("Connection lost, retrying...", 0);
+    fetch("/api/auth/state").then(r => r.ok ? r.json() : null).then(s => { if (s && !s.logged_in) toLogin(); }).catch(() => {});  // logged out elsewhere?
+  };
   es.onmessage = e => handle(JSON.parse(e.data));
 </script>
 </html>
