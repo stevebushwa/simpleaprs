@@ -33,7 +33,7 @@ def test_valid_values_are_cleaned():
 
 def test_bad_values_are_refused_with_a_reason():
     bad = {"callsign": "not a call", "lat": 91, "lon": "west", "symbol": "/", "comment": "x" * 44, "path": "A,B,C,D,E,F,G,H,I",
-           "beacon_minutes": -1, "tx_lead_ms": 5, "tx_level": 0, "nomad_url": "ftp://x", "map_cache": "yes", "map_cache_mb": 10,
+           "beacon_minutes": -1, "tx_lead_ms": 5, "tx_level": 0, "nomad_url": "ftp://x", "map_cache": "yes", "auto_gain": "on", "map_cache_mb": 10,
            "igate_server": "bad host!", "igate_passcode": "abc", "igate_radius_km": 0, "input_device": "No Such Card", "bogus": 1}
     clean, errors = check(bad)
     assert clean.keys() == set() and errors.keys() == bad.keys(), set(bad) - set(errors)

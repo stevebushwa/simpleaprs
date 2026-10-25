@@ -145,7 +145,7 @@ class Server:
         self.hub = Hub()      # raw frames, for desktop clients
         self.web_hub = Hub()  # decoded events, for browsers
         self.tracker = Tracker(cfg, self._emit, self.transmit, STATIONS_PATH)
-        self.radio = SoundRadio(self.on_frame)
+        self.radio = SoundRadio(self.on_frame, on_gain_message=log)
         self.share: ShareServer | None = None
         self.igate: IGate | None = None
         self.digi: Digipeater | None = None
@@ -196,7 +196,7 @@ class Server:
             missing = next((f"audio {label} device '{name}' not found" for label, name, inputs in
                             (("input", c.input_device, True), ("output", c.output_device, False))
                             if name and find_device(name, inputs) is None), "")
-            self.radio_note = missing or ("" if self.radio.start(c.input_device, c.output_device) else "no audio input found")
+            self.radio_note = missing or ("" if self.radio.start(c.input_device, c.output_device, c.auto_gain) else "no audio input found")
         except SystemExit as e:  # sounddevice / PortAudio isn't installed
             self.radio_note = str(e).splitlines()[0]
         if self.radio_note:
@@ -261,7 +261,7 @@ class Server:
 
     def _apply(self, changed: set[str]) -> None:
         c = self.cfg
-        if changed & {"input_device", "output_device"} or self.radio_note:  # also a retry, e.g. after plugging a sound card in
+        if changed & {"input_device", "output_device", "auto_gain"} or self.radio_note:  # also a retry, e.g. after plugging a sound card in
             self._open_radio()
         if changed & {"nomad_url", "map_cache", "map_cache_mb"} and self.web:
             p = self.web.proxy

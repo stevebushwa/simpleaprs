@@ -9,6 +9,7 @@ import threading
 import numpy as np
 
 from .afsk import BAUD, Demodulator, modulate
+from .autogain import AutoGain
 
 FS = 48000
 
@@ -37,19 +38,21 @@ def find_device(name: str, inputs: bool) -> str | None:
 
 
 class SoundRadio:
-    def __init__(self, on_frame, on_tx_start=lambda: None) -> None:
+    def __init__(self, on_frame, on_tx_start=lambda: None, on_gain_message=lambda text: None) -> None:
         """on_frame(raw) is called from a worker thread for every frame decoded."""
         self.on_frame, self.on_tx_start = on_frame, on_tx_start
         self._demod = Demodulator(FS)
+        self._gain = AutoGain(FS, on_gain_message)
         self._chunks: queue.Queue = queue.Queue(maxsize=200)
         self._in = self._out_dev = None
         self._worker: threading.Thread | None = None
         self._lock = threading.Lock()
         self.transmitting = False
 
-    def start(self, input_name: str = "", output_name: str = "") -> bool:
+    def start(self, input_name: str = "", output_name: str = "", auto_gain: bool = False) -> bool:
         """Open the audio input. False if there is no usable input device."""
         self.stop()
+        self._gain.configure(auto_gain, input_name)
         sd = _sd()
         self._out_dev = (find_device(output_name, False) or None) if output_name else None
         try:
@@ -85,7 +88,9 @@ class SoundRadio:
         while (data := self._chunks.get()) is not None:
             if self.transmitting:  # half duplex: don't decode our own audio
                 continue
-            for fr in self._demod.feed(np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768):
+            x = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768
+            self._gain.feed(x)
+            for fr in self._demod.feed(x):
                 self.on_frame(fr)
 
     def transmit(self, frame: bytes, lead_ms: int = 500, level: float = 0.5) -> None:

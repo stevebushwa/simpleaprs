@@ -8,6 +8,7 @@ from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, QTimer, Sign
 from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
 
 from .afsk import BAUD, Demodulator, modulate
+from .autogain import AutoGain
 
 FS = 48000
 
@@ -36,21 +37,24 @@ def _format() -> QAudioFormat:
 class Radio(QObject):
     frame_received = Signal(bytes)
     level = Signal(float)       # RX audio level 0..1, for the setup meter
+    gain_message = Signal(str)  # what auto gain just did, or why it can't
     tx_started = Signal()
     tx_finished = Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self._demod = Demodulator(FS)
+        self._gain = AutoGain(FS, self.gain_message.emit)
         self._src: QAudioSource | None = None
         self._io: QIODevice | None = None
         self._sink: QAudioSink | None = None
         self._txbuf: QBuffer | None = None
         self.transmitting = False
 
-    def start(self, input_name: str = "", output_name: str = "") -> bool:
+    def start(self, input_name: str = "", output_name: str = "", auto_gain: bool = False) -> bool:
         """Open the audio input. False if there is no usable input device."""
         self.stop()
+        self._gain.configure(auto_gain, input_name)
         self._in_dev, self._out_dev = _find(input_name, True), _find(output_name, False)
         self._src = QAudioSource(self._in_dev, _format())
         self._io = self._src.start()
@@ -73,6 +77,7 @@ class Radio(QObject):
         self.level.emit(float(min(1.0, np.abs(x).max() * 2)))
         if self.transmitting:  # half duplex: don't decode our own audio
             return
+        self._gain.feed(x)
         for fr in self._demod.feed(x):
             self.frame_received.emit(fr)
 

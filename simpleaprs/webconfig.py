@@ -55,6 +55,8 @@ def fields(inputs: list[str], outputs: list[str], symbol: str) -> list[Field]:
         Field("output_device", "Radio audio out", "select", "Radio", "The sound card feeding the radio's mic/data port", options=devices(outputs)),
         Field("tx_lead_ms", "VOX lead-in", "number", "Radio", "Raise it until the start of packets stops getting cut off", 100, 3000, 50, unit="ms"),
         Field("tx_level", "Transmit audio level", "number", "Radio", "Lower it if the radio sounds distorted", 0.05, 1, 0.05),
+        Field("auto_gain", "Automatic input volume", "bool", "Radio",
+              "Turns the sound card's input volume down when the radio's audio clips and up when it stays weak (PulseAudio/PipeWire)."),
         Field("nomad_url", "N.O.M.A.D. server", "text", "Map", "Project N.O.M.A.D. address; blank for no map", placeholder="http://nomad.local:8080"),
         Field("map_cache", "Cache map tiles on this machine", "bool", "Map"),
         Field("map_cache_mb", "Cache size limit", "number", "Map", lo=50, hi=20000, step=50, unit="MB", shows_if="map_cache"),
@@ -142,7 +144,7 @@ def _check(key: str, v, inputs: list[str], outputs: list[str]):
         return v
     if key == "igate_radius_km":
         return _num(v, 1, 500, True)
-    if key in ("map_cache", "igate_enabled", "igate_to_rf", "digi_enabled", "digi_wide", "share_allow_tx"):
+    if key in ("auto_gain", "map_cache", "igate_enabled", "igate_to_rf", "digi_enabled", "digi_wide", "share_allow_tx"):
         if not isinstance(v, bool):
             raise ValueError("must be on or off")
         return v

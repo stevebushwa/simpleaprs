@@ -78,6 +78,7 @@ class SettingsDialog(QDialog):
         self.inp.setCurrentIndex(max(0, self.inp.findData(cfg.input_device)))
         self.out.setCurrentIndex(max(0, self.out.findData(cfg.output_device)))
         self.lead = QSpinBox(); self.lead.setRange(100, 3000); self.lead.setSuffix(" ms"); self.lead.setValue(cfg.tx_lead_ms)
+        self.auto_gain = QCheckBox("Adjust the input volume automatically"); self.auto_gain.setChecked(cfg.auto_gain)
         self.beacon = QSpinBox(); self.beacon.setRange(0, 120); self.beacon.setSuffix(" min (0 = manual)"); self.beacon.setValue(cfg.beacon_minutes)
         self.nomad = QLineEdit(cfg.nomad_url)
         self.cache_on = QCheckBox("Cache map tiles on this computer"); self.cache_on.setChecked(cfg.map_cache)
@@ -145,8 +146,10 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(page([("Callsign", self.call), ("Latitude", self.lat), ("Longitude", self.lon), ("Map symbol", symbol_row),
                           ("Beacon comment", self.comment), ("Path for your packets", self.path), ("Auto beacon", self.beacon)]), "Station")
-        tabs.addTab(page([("Radio audio in", self.inp), ("Radio audio out", self.out), ("VOX lead-in", self.lead)],
-                         QLabel("Tip: with VOX, raise the lead-in until the start of packets stops getting cut off.")), "Radio")
+        tabs.addTab(page([("Radio audio in", self.inp), ("Radio audio out", self.out), ("VOX lead-in", self.lead), ("Receive gain", self.auto_gain)],
+                         QLabel("Tip: with VOX, raise the lead-in until the start of packets stops getting cut off."),
+                         QLabel("Automatic input volume turns the sound card's capture volume down when the radio's audio clips and up "
+                                "when it stays weak. Needs PulseAudio or PipeWire (pactl or wpctl).")), "Radio")
         tabs.addTab(page([("Alert sounds out", self.alert_out), ("Play alert for", self.a_msg), ("", self.a_new), ("", self.a_sent)]), "Alerts")
         tabs.addTab(page([("N.O.M.A.D. server", self.nomad), ("Map cache", self.cache_on), ("Cache size limit", cache_row)]), "Map")
         tabs.addTab(page([("Mode", self.mode), ("Server address", self.remote_url), ("Server token", self.remote_token),
@@ -241,6 +244,7 @@ class SettingsDialog(QDialog):
         c.symbol = self._symbol()
         c.comment, c.path = self.comment.text(), self.path.text().strip()
         c.input_device, c.output_device = self.inp.currentData(), self.out.currentData()
+        c.auto_gain = self.auto_gain.isChecked()
         c.alert_device, c.alert_message = self.alert_out.currentData(), self.a_msg.isChecked()
         c.alert_new_station, c.alert_sent = self.a_new.isChecked(), self.a_sent.isChecked()
         c.tx_lead_ms, c.beacon_minutes, c.nomad_url = self.lead.value(), self.beacon.value(), self.nomad.text().strip()
@@ -265,6 +269,7 @@ class MainWindow(QMainWindow):
         self.alerts = Alerts()
         self.alerts.muted = self.cfg.alerts_muted
         self.radio.frame_received.connect(self.on_frame)
+        self.radio.gain_message.connect(lambda text: self.status.setText(text))
         self.radio.level.connect(lambda v: self.meter.setValue(int(v * 100)))
         self.radio.tx_started.connect(lambda: self.status.setText("TRANSMITTING"))
         self.radio.tx_finished.connect(self._tx_done)
@@ -425,7 +430,7 @@ class MainWindow(QMainWindow):
             return
         self.remote.stop()
         self._start_share()
-        listening = self.radio.start(self.cfg.input_device, self.cfg.output_device)
+        listening = self.radio.start(self.cfg.input_device, self.cfg.output_device, self.cfg.auto_gain)
         self._start_igate()
         if self.cfg.digi_enabled and self.cfg.configured:
             self.digi = Digipeater(self.cfg.callsign, self.cfg.digi_wide)

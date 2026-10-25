@@ -23,6 +23,7 @@ class Config:
     output_device: str = ""
     tx_lead_ms: int = 500    # VOX lead-in: extra preamble so VOX is open before data starts
     tx_level: float = 0.5
+    auto_gain: bool = False  # keep the sound card's input volume where the radio's audio neither clips nor is weak
     beacon_minutes: int = 0  # 0 = manual only
     alert_device: str = ""   # empty = system default; keep this off the radio's sound card
     alert_message: bool = True

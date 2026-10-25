@@ -16,7 +16,7 @@ class FakeRadio:
         self.sent, self.starts = [], []
         self.transmitting = False
 
-    def start(self, inp, out):
+    def start(self, inp, out, auto_gain=False):
         self.starts.append((inp, out))
         return True
 
@@ -230,14 +230,16 @@ def test_changing_the_sound_card_reopens_the_radio(srv):
     srv.radio.starts.clear()
     call(srv, "POST", "/api/settings", {"changes": {"comment": "x"}}, cookie=cookie)
     assert srv.radio.starts == []  # unrelated changes leave the radio alone
+    call(srv, "POST", "/api/settings", {"changes": {"auto_gain": True}}, cookie=cookie)
+    assert len(srv.radio.starts) == 1 and srv.cfg.auto_gain
 
 
 def test_a_radio_that_would_not_open_is_reported_and_retried(srv):
     cookie, _ = setup(srv)
-    srv.radio.start = lambda i, o: False
+    srv.radio.start = lambda i, o, g=False: False
     call(srv, "POST", "/api/settings", {"changes": {"input_device": "USB Audio"}}, cookie=cookie)
     assert srv.status()["radio_ok"] is False and "audio input" in srv.status()["radio"]
-    srv.radio.start = lambda i, o: True  # a card got plugged in
+    srv.radio.start = lambda i, o, g=False: True  # a card got plugged in
     call(srv, "POST", "/api/settings", {"changes": {"comment": "again"}}, cookie=cookie)
     assert srv.status()["radio_ok"] is True
 
