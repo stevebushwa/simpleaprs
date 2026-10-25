@@ -269,12 +269,13 @@ class MainWindow(QMainWindow):
         self.alerts = Alerts()
         self.alerts.muted = self.cfg.alerts_muted
         self.radio.frame_received.connect(self.on_frame)
-        self.radio.gain_message.connect(lambda text: self.status.setText(text))
+        self.radio.gain_message.connect(self._note)
         self.radio.level.connect(self._on_level)
         self._level_sent = 0.0
+        self._tx_what = "packet"  # what the transmission in progress is, for the status row
         self.meter_idle = QTimer(self, singleShot=True, interval=1500)  # a followed server that goes quiet
         self.meter_idle.timeout.connect(lambda: self.meter.setValue(0))
-        self.radio.tx_started.connect(lambda: self.status.setText("TRANSMITTING"))
+        self.radio.tx_started.connect(lambda: self._note("TRANSMITTING"))
         self.radio.tx_finished.connect(self._tx_done)
         self.stations: dict[str, aprs.Packet] = {}
         self.heard: dict[str, float] = {}  # station -> epoch seconds last heard
@@ -299,7 +300,7 @@ class MainWindow(QMainWindow):
         self._mode = self.cfg.mode
         self.remote.event.connect(self._on_remote_event)
         self.remote.state.connect(self._remote_state)
-        self.remote.tx_result.connect(lambda ok, msg: self.status.setText("Sent through the server's radio" if ok else f"Server refused: {msg}"))
+        self.remote.tx_result.connect(lambda ok, msg: self._note("Sent through the server's radio" if ok else f"Server refused: {msg}"))
         self.remote_tx_requested.connect(self._remote_tx)
         self.igate: IGate | None = None
         self.digi: Digipeater | None = None
@@ -347,13 +348,6 @@ class MainWindow(QMainWindow):
         tb.addAction("Settings", self.open_settings)
         mute = tb.addAction("Mute alerts"); mute.setCheckable(True); mute.setChecked(self.cfg.alerts_muted)
         mute.toggled.connect(self._mute)
-        tb.addSeparator()
-        self.status = QLabel("Starting..."); tb.addWidget(self.status)
-        tb.addSeparator(); tb.addWidget(QLabel(" RX audio "))
-        self.meter = QProgressBar(); self.meter.setMaximumWidth(120); self.meter.setTextVisible(False); tb.addWidget(self.meter)
-        self._igate_sep = tb.addSeparator()
-        self.igate_label = QLabel(); self._igate_action = tb.addWidget(self.igate_label)
-        self._igate_sep.setVisible(False); self._igate_action.setVisible(False)
         spacer = QWidget(); spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred); tb.addWidget(spacer)
         tb.addWidget(QLabel(" Show "))
         self.filter = QComboBox()
@@ -362,6 +356,19 @@ class MainWindow(QMainWindow):
         self.filter.setCurrentIndex(max(0, self.filter.findData(self.cfg.map_filter)))
         self.filter.currentIndexChanged.connect(self._filter_changed)
         tb.addWidget(self.filter)
+
+        # Second row: what state we are in, and what just happened.
+        self.addToolBarBreak()
+        sb = self.addToolBar("status"); sb.setMovable(False)
+        self.status = QLabel("Starting..."); sb.addWidget(self.status)
+        sb.addSeparator()
+        self.activity = QLabel(); sb.addWidget(self.activity)
+        spacer = QWidget(); spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred); sb.addWidget(spacer)
+        self._igate_sep = sb.addSeparator()
+        self.igate_label = QLabel(); self._igate_action = sb.addWidget(self.igate_label)
+        self._igate_sep.setVisible(False); self._igate_action.setVisible(False)
+        sb.addSeparator(); sb.addWidget(QLabel(" RX audio "))
+        self.meter = QProgressBar(); self.meter.setMaximumWidth(120); self.meter.setTextVisible(False); sb.addWidget(self.meter)
 
         self.timer = QTimer(self); self.timer.timeout.connect(self.beacon_now)
         self._load_stations()
@@ -383,8 +390,12 @@ class MainWindow(QMainWindow):
     def _idle_status(self) -> str:
         return "Listening" + self.share_note
 
+    def _note(self, text: str) -> None:
+        """What just happened, with the time, on the status row."""
+        self.activity.setText(f"{time.strftime('%H:%M:%S')}  {text}")
+
     def _tx_done(self) -> None:
-        self.status.setText(self._idle_status())
+        self._note(f"Sent {self._tx_what}")
         if self.cfg.alert_sent:
             self.alerts.play("sent")
 
@@ -519,7 +530,7 @@ class MainWindow(QMainWindow):
         if "hello" in ev:
             h = ev["hello"]
             self.remote_ident = Config(**{k: h[k] for k in ("callsign", "lat", "lon", "symbol", "comment", "path") if k in h})
-            self.status.setText(f"Following {self.remote_ident.callsign} at {self.cfg.remote_url}"
+            self.status.setText(f"Connected to {self.cfg.remote_url}, following {self.remote_ident.callsign}"
                                 + ("" if h.get("allow_tx") else " (view only)"))
             if self._map_loaded:
                 self._plot_me()
@@ -717,9 +728,11 @@ class MainWindow(QMainWindow):
             digi = next(str(a).rstrip("*") for a in reversed(frame.path) if a.repeated)
             self.packets.append(f"{stamp}  {frame}   <-- OUR PACKET, repeated by {digi}")
             if not replay:
-                self.status.setText(f"Heard by {digi} at {stamp}")
+                self._note(f"Our packet was repeated by {digi}")
             return
         self.packets.append(f"{stamp}  {frame}")
+        if not replay:
+            self._note(f"Heard {p.source} ({p.kind})")
         if p.inner:  # third-party: a message for us can arrive this way, relayed by an iGate
             if p.inner.kind == "message":
                 self._on_message(p.inner, stamp, via=p.source, replay=replay)
@@ -815,6 +828,7 @@ class MainWindow(QMainWindow):
         """Put a frame on the air. relay: it is someone else's packet that we are passing on (digipeating or
         gating), which clients following this radio must not show as our own message."""
         self.packets.append(f"{time.strftime('%H:%M:%S')}  TX {frame}" + ("   (relayed)" if relay else ""))
+        self._tx_what = "relayed packet" if relay else {"position": "beacon", "message": "message"}.get(aprs.parse(frame).kind, "packet")
         self.hub.publish({"t": time.time(), "raw": frame.encode().hex(), "tx": True, **({"relay": True} if relay else {})})
         self.radio.transmit(frame.encode(), self.cfg.tx_lead_ms, self.cfg.tx_level)
 
@@ -877,7 +891,7 @@ class MainWindow(QMainWindow):
                 self.table.removeRow(r)
         self._js(f"removeStations({json.dumps(gone)})")
         self._save_stations()
-        self.status.setText(f"Forgot {len(gone)} stations")
+        self._note(f"Forgot {len(gone)} stations")
 
     def closeEvent(self, e) -> None:
         self._save_stations()

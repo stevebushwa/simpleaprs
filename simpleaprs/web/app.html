@@ -13,11 +13,13 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
   body { display: grid; grid-template-rows: auto 1fr; }
-  header { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--bar); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header { padding: 4px 12px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  header .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 30px; }
   header h1 { margin: 0; font-size: 15px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #c33; flex: none; }
   .dot.on { background: #2a9d4a; }
   #status { color: var(--dim); }
+  #activity { color: var(--dim); font-size: 13px; }
   #rx { width: 70px; height: 8px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; flex: none; }
   #rx i { display: block; height: 100%; width: 0; background: #2a9d4a; transition: width .1s linear; }
   .grow { flex: 1; }
@@ -78,15 +80,22 @@
   }
 </style>
 <header>
-  <span class="dot" id="conn"></span><h1 id="title">simpleaprs</h1><span id="status">Connecting...</span>
-  <span id="rx" title="RX audio level"><i></i></span>
-  <span id="igate"></span>
-  <span class="grow"></span>
-  <label>Show <select id="filter">
-    <option value="all">All stations</option><option value="weather">Weather stations</option><option value="igate">iGates</option>
-    <option value="digi">Digipeaters</option><option value="mobile">Mobile (vehicles, aircraft, boats)</option></select></label>
-  <button class="act" id="beacon" disabled>Beacon now</button>
-  <button class="ghost" id="logout" hidden>Log out</button>
+  <div class="row">
+    <span class="dot" id="conn"></span><h1 id="title">simpleaprs</h1>
+    <span class="grow"></span>
+    <label>Show <select id="filter">
+      <option value="all">All stations</option><option value="weather">Weather stations</option><option value="igate">iGates</option>
+      <option value="digi">Digipeaters</option><option value="mobile">Mobile (vehicles, aircraft, boats)</option></select></label>
+    <button class="act" id="beacon" disabled>Beacon now</button>
+    <button class="ghost" id="logout" hidden>Log out</button>
+  </div>
+  <div class="row">
+    <span id="status">Connecting...</span>
+    <span id="activity"></span>
+    <span class="grow"></span>
+    <span id="igate"></span>
+    <span id="rx" title="RX audio level"><i></i></span>
+  </div>
 </header>
 <main>
   <div id="mapbox"><div id="map"></div><div id="msg"></div></div>
@@ -349,6 +358,9 @@
   // The map's "Message" popup button: open the message form addressed to that station.
   window.onStationAction = (what, call) => {
     if (what === "clear-inactive") {
+      const n = Object.values(stations).filter(s => s.ev.stale).length;
+      if (!n) return say("Every station was heard since the server started");
+      if (!confirm(`Forget ${n} station${n === 1 ? "" : "s"} not heard since the server started?\n\nThey are removed from the map, the list and the server's saved file.`)) return;
       api("/api/forget-inactive", {}).then(r => say(r.ok ? `Forgot ${r.body.removed} stations` : `Could not clear them: ${r.body.error || r.status}`)).catch(() => {});
       return;
     }
@@ -357,8 +369,10 @@
     $("to").value = call; $("text").focus();
   };
 
+  let synced = false;
+  const note = text => { $("activity").textContent = new Date().toLocaleTimeString([], {hour12: false}) + "  " + text; };
   const handle = ev => {
-    if (ev.sync) return idle();
+    if (ev.sync) { synced = true; return idle(); }
     switch (ev.type) {
       case "me":
         me = ev; allowTx = ev.allow_tx;
@@ -379,15 +393,15 @@
         document.querySelector("#rx i").style.width = Math.round(Math.min(1, ev.level) * 100) + "%";
         clearTimeout(handle.rx); handle.rx = setTimeout(() => document.querySelector("#rx i").style.width = "0", 1500);
         break;
-      case "station": onStation(ev); break;
+      case "station": onStation(ev); if (synced) note(`Heard ${ev.call}`); break;
       case "gone": forget(ev.calls); break;
-      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); break;
-      case "message": addLine($("msgs"), ev.t, ev.text, ev.kind || "direct"); break;
+      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); if (synced && ev.tx) note("Transmitted a packet"); break;
+      case "message": addLine($("msgs"), ev.t, ev.text, ev.kind || "direct"); if (synced) note(ev.text.length > 70 ? ev.text.slice(0, 70) + "..." : ev.text); break;
     }
   };
   const savedTab = store.get("tab"); if (savedTab) document.querySelector(`nav button[data-tab=${savedTab}]`)?.click();
   const es = new EventSource("/web/events");
-  es.onopen = () => { $("conn").classList.add("on"); $("msgs").textContent = ""; $("pkts").textContent = ""; };  // the server replays them
+  es.onopen = () => { synced = false; $("conn").classList.add("on"); $("msgs").textContent = ""; $("pkts").textContent = ""; };  // the server replays them
   es.onerror = () => {
     $("conn").classList.remove("on"); document.querySelector("#rx i").style.width = "0"; say("Connection lost, retrying...", 0);
     fetch("/api/auth/state").then(r => r.ok ? r.json() : null).then(s => { if (s && !s.logged_in) toLogin(); }).catch(() => {});  // logged out elsewhere?
