@@ -49,7 +49,34 @@ const drawRoute = segs => {
   const src = map.getSource("route");
   if (src) src.setData(routeData);
 };
+// Tracks: where a moving station has been, one green line per station.
+let trailData = {type: "FeatureCollection", features: []};
+const markers = {};
+const drawTrails = () => {
+  trailData = {type: "FeatureCollection", features: Object.values(markers)
+    .filter(m => m.trail.length >= 2 && m.getElement().style.display !== "none")
+    .map(m => ({type: "Feature", properties: {old: m.getElement().classList.contains("old")},
+                geometry: {type: "LineString", coordinates: m.trail.map(([lat, lon]) => [lon, lat])}}))};
+  const src = map.getSource("trails");
+  if (src) src.setData(trailData);
+};
+// Everything setStation changes is redrawn once per frame, not once per station: a backlog is thousands of calls.
+let refreshQueued = false;
+const refresh = () => {
+  if (refreshQueued) return;
+  refreshQueued = true;
+  requestAnimationFrame(() => {
+    refreshQueued = false;
+    drawTrails();
+    const n = Object.values(markers).filter(m => m.getElement().classList.contains("old")).length;
+    clearOld.hidden = n === 0;
+    clearOld.textContent = `Clear inactive (${n})`;
+  });
+};
 map.on("style.load", () => {  // setStyle drops sources, so add ours again each time
+  map.addSource("trails", {type: "geojson", data: trailData});
+  map.addLayer({id: "trails", type: "line", source: "trails", layout: {"line-cap": "round", "line-join": "round"},
+    paint: {"line-color": "#1f9d3a", "line-width": 3, "line-opacity": ["case", ["get", "old"], 0.35, 0.85]}});
   map.addSource("route", {type: "geojson", data: routeData});
   const paint = {"line-color": "#6a2fd6", "line-width": 3, "line-opacity": 0.85};
   map.addLayer({id: "route-solid", type: "line", source: "route", filter: ["!", ["get", "dashed"]], paint});
@@ -57,7 +84,6 @@ map.on("style.load", () => {  // setStyle drops sources, so add ours again each 
     paint: {...paint, "line-dasharray": [2, 2]}});
 });
 
-const markers = {};
 let shown = null;  // call whose route is on the map
 
 // Each click on a station steps it through: popup + route -> route only -> nothing.
@@ -79,7 +105,7 @@ const clickStation = call => {
   }
 };
 // info: [[label, value], ...] shown when the marker is clicked; icon/cls pick the badge shape and colour
-window.setStation = (call, lat, lon, label, me, info, stale, icon, cls, segs, visible) => {
+window.setStation = (call, lat, lon, label, me, info, stale, icon, cls, segs, visible, trail) => {
   let m = markers[call];
   if (!m) {
     const el = document.createElement("div");
@@ -100,9 +126,41 @@ window.setStation = (call, lat, lon, label, me, info, stale, icon, cls, segs, vi
   el.querySelector("b").textContent = label;
   m.pop.setDOMContent(popup(call, info, me));
   m.routeSegs = segs || [];
+  m.trail = trail || [];
   el.style.display = visible === false ? "none" : "";
   if (visible === false && m.state) clearStation(call);
   if (shown === call) drawRoute(m.routeSegs);  // a hop's position may have just been learned
   if (m.state === "popup") m.pop.setLngLat([lon, lat]);
+  refresh();
+};
+window.removeStations = calls => {
+  for (const call of calls) {
+    const m = markers[call];
+    if (!m) continue;
+    if (shown === call) { shown = null; drawRoute([]); }
+    m.pop.remove();
+    m.remove();
+    delete markers[call];
+  }
+  refresh();
 };
 window.centerOn = (lat, lon, zoom) => map.flyTo({center: [lon, lat], zoom: zoom || map.getZoom()});
+
+// What the colours mean, and the one button that acts on them. Built here so the desktop window and the web page both get it.
+const legend = document.createElement("details");
+legend.id = "legend";
+const rows = [
+  ["dot", "#d33", "Station"], ["dot", "#1e6fe8", "Weather station"], ["dot", "#1f9d3a", "iGate"],
+  ["dot", "#e08a00", "Digipeater"], ["dot", "#8a3ffc", "You (your radio)"], ["dot old", "#d33", "Not heard since start"],
+  ["line", "#1f9d3a", "Track of a moving station"], ["line", "#6a2fd6", "Route of the clicked station"],
+  ["line dashed", "#6a2fd6", "Hop with no known position"]];
+legend.innerHTML = "<summary>Legend</summary>" + rows.map(([k, c, t]) => `<div><i class="${k}" style="--c:${c}"></i>${t}</div>`).join("");
+const clearOld = document.createElement("button");
+clearOld.hidden = true;
+clearOld.textContent = "Clear inactive (0)";
+clearOld.title = "Forget the stations that are shown grey";
+clearOld.onclick = () => act("clear-inactive", "");
+legend.appendChild(clearOld);
+try { legend.open = localStorage.getItem("legend") !== "closed"; } catch { legend.open = true; }
+legend.addEventListener("toggle", () => { try { localStorage.setItem("legend", legend.open ? "open" : "closed"); } catch {} });
+map.getContainer().appendChild(legend);

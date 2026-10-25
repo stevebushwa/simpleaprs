@@ -38,9 +38,10 @@ def find_device(name: str, inputs: bool) -> str | None:
 
 
 class SoundRadio:
-    def __init__(self, on_frame, on_tx_start=lambda: None, on_gain_message=lambda text: None) -> None:
-        """on_frame(raw) is called from a worker thread for every frame decoded."""
-        self.on_frame, self.on_tx_start = on_frame, on_tx_start
+    def __init__(self, on_frame, on_tx_start=lambda: None, on_gain_message=lambda text: None, on_level=lambda v: None) -> None:
+        """on_frame(raw) is called from a worker thread for every frame decoded, on_level(0..1) for every
+        tenth of a second of input audio (the same scale as audio.Radio.level)."""
+        self.on_frame, self.on_tx_start, self.on_level = on_frame, on_tx_start, on_level
         self._demod = Demodulator(FS)
         self._gain = AutoGain(FS, on_gain_message)
         self._chunks: queue.Queue = queue.Queue(maxsize=200)
@@ -86,9 +87,11 @@ class SoundRadio:
 
     def _decode(self) -> None:
         while (data := self._chunks.get()) is not None:
+            x = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768
+            if x.size:
+                self.on_level(float(min(1.0, np.abs(x).max() * 2)))
             if self.transmitting:  # half duplex: don't decode our own audio
                 continue
-            x = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768
             self._gain.feed(x)
             for fr in self._demod.feed(x):
                 self.on_frame(fr)

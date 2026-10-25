@@ -70,6 +70,14 @@ class WebUI:
     # --- POST ---------------------------------------------------------------------------------------
 
     def handle_post(self, h) -> bool:
+        if h.path == "/api/forget-inactive":  # the map's button: forget the stations not heard since the server started
+            if self.auth and not self.session_ok(h):
+                h._reply(401, {"error": "login required"})
+            elif not self.auth and not self.allow_tx:
+                h._reply(403, {"error": "turned off on this server"})
+            else:
+                h._reply(200, {"ok": True, "removed": len(self.tracker.forget_inactive())})
+            return True
         if not self.auth:
             return False
         public = {"/api/setup": self._setup, "/api/login": self._login}

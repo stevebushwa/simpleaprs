@@ -18,6 +18,8 @@
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #c33; flex: none; }
   .dot.on { background: #2a9d4a; }
   #status { color: var(--dim); }
+  #rx { width: 70px; height: 8px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; flex: none; }
+  #rx i { display: block; height: 100%; width: 0; background: #2a9d4a; transition: width .1s linear; }
   .grow { flex: 1; }
   main { display: grid; grid-template-columns: 1fr 400px; min-height: 0; }
   #mapbox { position: relative; min-height: 0; }
@@ -77,6 +79,7 @@
 </style>
 <header>
   <span class="dot" id="conn"></span><h1 id="title">simpleaprs</h1><span id="status">Connecting...</span>
+  <span id="rx" title="RX audio level"><i></i></span>
   <span id="igate"></span>
   <span class="grow"></span>
   <label>Show <select id="filter">
@@ -140,7 +143,11 @@
     tr.children[3].textContent = ev.note;
     const label = filter === "weather" && ev.temp ? `${call} ${ev.temp}` : call;
     const info = [["Heard", stamp(ev.heard) + (ev.stale ? " (previous session)" : "")], ...ev.info];
-    onMap("setStation", call, ev.lat, ev.lon, label, false, info, ev.stale, ev.icon, ev.cls, ev.segs, visible(ev));
+    onMap("setStation", call, ev.lat, ev.lon, label, false, info, ev.stale, ev.icon, ev.cls, ev.segs, visible(ev), ev.trail);
+  };
+  const forget = calls => {
+    for (const c of calls) { stations[c]?.tr.remove(); delete stations[c]; }
+    onMap("removeStations", calls);
   };
   $("filter").onchange = e => { filter = e.target.value; store.set("filter", filter); Object.keys(stations).forEach(plot); };
   const onStation = ev => {
@@ -341,6 +348,10 @@
   };
   // The map's "Message" popup button: open the message form addressed to that station.
   window.onStationAction = (what, call) => {
+    if (what === "clear-inactive") {
+      api("/api/forget-inactive", {}).then(r => say(r.ok ? `Forgot ${r.body.removed} stations` : `Could not clear them: ${r.body.error || r.status}`)).catch(() => {});
+      return;
+    }
     if (what !== "message") return;
     document.querySelector("nav button[data-tab=messages]").click();
     $("to").value = call; $("text").focus();
@@ -364,7 +375,12 @@
         if (!ev.configured && !welcomed) { welcomed = true; document.querySelector("nav button[data-tab=settings]").click(); }
         if (schema) { schema.status = ev; if (!$("settings").hidden && ["Radio", "iGate"].includes(group)) renderSettings(); }
         break;
+      case "level":
+        document.querySelector("#rx i").style.width = Math.round(Math.min(1, ev.level) * 100) + "%";
+        clearTimeout(handle.rx); handle.rx = setTimeout(() => document.querySelector("#rx i").style.width = "0", 1500);
+        break;
       case "station": onStation(ev); break;
+      case "gone": forget(ev.calls); break;
       case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); break;
       case "message": addLine($("msgs"), ev.t, ev.text, ev.kind || "direct"); break;
     }
@@ -373,7 +389,7 @@
   const es = new EventSource("/web/events");
   es.onopen = () => { $("conn").classList.add("on"); $("msgs").textContent = ""; $("pkts").textContent = ""; };  // the server replays them
   es.onerror = () => {
-    $("conn").classList.remove("on"); say("Connection lost, retrying...", 0);
+    $("conn").classList.remove("on"); document.querySelector("#rx i").style.width = "0"; say("Connection lost, retrying...", 0);
     fetch("/api/auth/state").then(r => r.ok ? r.json() : null).then(s => { if (s && !s.logged_in) toLogin(); }).catch(() => {});  // logged out elsewhere?
   };
   es.onmessage = e => handle(JSON.parse(e.data));

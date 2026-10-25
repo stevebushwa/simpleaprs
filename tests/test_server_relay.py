@@ -97,3 +97,16 @@ def test_igate_without_passcode_waits_instead_of_exiting():
         assert wait_for(lambda: "passcode" in s.igate_text)
     finally:
         s.stop()
+
+
+def test_rx_level_goes_to_watchers_but_not_into_the_replay():
+    s = server()
+    s._on_level(0.5)  # nobody watching: nothing kept
+    assert not s.hub._log and not s.web_hub._log
+    q, backlog = s.hub.subscribe()
+    wq, _ = s.web_hub.subscribe()
+    assert backlog == []
+    s._on_level(0.456)
+    assert q.get_nowait() == {"level": 0.46}
+    assert wq.get_nowait() == {"type": "level", "level": 0.46}
+    assert s.hub.subscribe()[1] == [] and s.web_hub.subscribe()[1] == []  # new clients are not replayed old levels

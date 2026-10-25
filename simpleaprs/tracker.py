@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import aprs
+from . import aprs, trails
 from .ax25 import Frame
 from .config import Config
 
@@ -26,6 +26,7 @@ class Tracker:
         self.heard: dict[str, float] = {}
         self.wx: dict[str, dict] = {}
         self.roles: dict[str, set[str]] = {}
+        self.trails: dict[str, trails.Trail] = {}  # station -> where it has been, oldest first
         self.note: dict[str, str] = {}  # station -> the text its table row shows
         self.live: set[str] = set()  # heard this run; the rest are remembered ones, drawn grey
         self.bulletins: dict[tuple[str, str], str] = {}  # (sender, BLN address) -> last text logged: senders repeat them
@@ -54,6 +55,7 @@ class Tracker:
                     self.heard[p.source] = float(rec["heard"])
                     self.wx[p.source] = rec.get("wx") or {}
                     self.note[p.source] = p.comment
+                    self.trails[p.source] = trails.clean(saved.get("trails", {}).get(p.source)) or trails.Trail([[p.lat, p.lon, int(self.heard[p.source])]])
                 except (KeyError, ValueError, TypeError, AttributeError):
                     continue
 
@@ -62,7 +64,8 @@ class Tracker:
         with self.lock:
             recent = sorted(self.raw, key=lambda c: self.heard.get(c, 0), reverse=True)[:500]
             return {"stations": [{"raw": self.raw[c].hex(), "heard": self.heard.get(c, 0), "wx": dict(self.wx.get(c, {}))} for c in recent],
-                    "roles": {c: sorted(r) for c, r in self.roles.items()}}
+                    "roles": {c: sorted(r) for c, r in self.roles.items()},
+                    "trails": {c: self.trails[c] for c in recent if len(self.trails.get(c, ())) >= 2}}
 
     def save(self) -> None:
         if not self.dirty:
@@ -105,7 +108,7 @@ class Tracker:
         info.append(["Raw", str(p.frame)])
         return {"type": "station", "call": call, "lat": p.lat, "lon": p.lon, "icon": icon, "cls": cls,
                 "kinds": sorted(aprs.kinds(p.symbol, bool(wx), roles)), "info": info, "segs": segs,
-                "temp": wx.get("Temp", ""), "heard": self.heard.get(call, 0), "stale": call not in self.live,
+                "trail": trails.line(self.trails.get(call, [])), "temp": wx.get("Temp", ""), "heard": self.heard.get(call, 0), "stale": call not in self.live,
                 "note": self.note.get(call, "")}
 
     def intro(self, allow_tx: bool) -> list[dict]:
@@ -149,6 +152,8 @@ class Tracker:
             if p.weather:
                 self.wx[p.source] = p.weather
             if p.kind == "position":
+                if p.lat is not None:
+                    trails.extend(self.trails.setdefault(p.source, trails.Trail()), p.lat, p.lon, now)
                 self.stations[p.source], self.raw[p.source] = p, raw
                 self.note[p.source] = p.comment
             elif p.kind == "weather":
@@ -162,6 +167,20 @@ class Tracker:
                     for q in list(self.stations.values()):
                         if q is not self.stations[p.source] and any(str(a).rstrip("*") == p.source for a in q.frame.path):
                             self._station(q.source)
+
+    def forget_inactive(self) -> list[str]:
+        """Drop every station not heard since we started (the grey ones), from memory and the file.
+        Tells the pages which went. Returns their names."""
+        with self.lock:
+            gone = sorted(c for c in self.stations if c not in self.live)
+            for c in gone:
+                for d in (self.stations, self.raw, self.heard, self.wx, self.roles, self.trails, self.note):
+                    d.pop(c, None)
+            if gone:
+                self.dirty = True
+                self.save()
+                self.emit({"type": "gone", "calls": gone}, False)
+            return gone
 
     def on_tx(self, raw: bytes, now: float | None = None, relay: bool = False) -> None:
         """A frame we just transmitted (beacon, message, ack). relay: someone else's packet we passed on."""

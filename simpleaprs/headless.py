@@ -145,7 +145,7 @@ class Server:
         self.hub = Hub()      # raw frames, for desktop clients
         self.web_hub = Hub()  # decoded events, for browsers
         self.tracker = Tracker(cfg, self._emit, self.transmit, STATIONS_PATH)
-        self.radio = SoundRadio(self.on_frame, on_gain_message=log)
+        self.radio = SoundRadio(self.on_frame, on_gain_message=log, on_level=self._on_level)
         self.share: ShareServer | None = None
         self.igate: IGate | None = None
         self.digi: Digipeater | None = None
@@ -316,6 +316,14 @@ class Server:
         self.web_hub.publish(ev, keep)
         if ev["type"] == "message" or (ev["type"] == "packet" and not self.quiet):
             log(("MESSAGE " if ev["type"] == "message" else "") + ev["text"])
+
+    def _on_level(self, v: float) -> None:
+        """RX audio level for the meters of whoever is watching (never replayed to new clients)."""
+        v = round(v, 2)
+        if self.hub.count():
+            self.hub.publish({"level": v}, False)
+        if self.web_hub.count():
+            self.web_hub.publish({"type": "level", "level": v}, False)
 
     def on_frame(self, raw: bytes) -> None:
         now = time.time()

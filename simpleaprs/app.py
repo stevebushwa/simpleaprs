@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from . import aprs, icons
+from . import aprs, icons, trails
 from .alerts import Alerts
 from .audio import Radio, device_names
 from .ax25 import Frame
@@ -270,7 +270,10 @@ class MainWindow(QMainWindow):
         self.alerts.muted = self.cfg.alerts_muted
         self.radio.frame_received.connect(self.on_frame)
         self.radio.gain_message.connect(lambda text: self.status.setText(text))
-        self.radio.level.connect(lambda v: self.meter.setValue(int(v * 100)))
+        self.radio.level.connect(self._on_level)
+        self._level_sent = 0.0
+        self.meter_idle = QTimer(self, singleShot=True, interval=1500)  # a followed server that goes quiet
+        self.meter_idle.timeout.connect(lambda: self.meter.setValue(0))
         self.radio.tx_started.connect(lambda: self.status.setText("TRANSMITTING"))
         self.radio.tx_finished.connect(self._tx_done)
         self.stations: dict[str, aprs.Packet] = {}
@@ -279,6 +282,7 @@ class MainWindow(QMainWindow):
         self.wx: dict[str, dict] = {}  # station -> latest weather fields
         self.roles: dict[str, set[str]] = {}  # station -> {"digi", "igate"}, from what we have seen it do
         self.raw: dict[str, bytes] = {}  # station -> raw frame of its last position packet
+        self.trails: dict[str, trails.Trail] = {}  # station -> where it has been, oldest first
         self.msg_log: list[tuple[str, str]] = []  # (kind "direct" | "bulletin", line) for the Messages tab, so its filter can redraw
         self.bulletins: dict[tuple[str, str], str] = {}  # (sender, BLN address) -> last text logged: senders repeat them
         self.save_timer = QTimer(self, singleShot=True, interval=5000)
@@ -294,7 +298,7 @@ class MainWindow(QMainWindow):
         self._map_loaded = False
         self._mode = self.cfg.mode
         self.remote.event.connect(self._on_remote_event)
-        self.remote.state.connect(lambda t: self.status.setText(t))
+        self.remote.state.connect(self._remote_state)
         self.remote.tx_result.connect(lambda ok, msg: self.status.setText("Sent through the server's radio" if ok else f"Server refused: {msg}"))
         self.remote_tx_requested.connect(self._remote_tx)
         self.igate: IGate | None = None
@@ -407,7 +411,7 @@ class MainWindow(QMainWindow):
         if self._mode != self.cfg.mode:  # switched between local radio and a remote server: different station memory
             self._save_stations(self._mode == "remote")
             self._mode = self.cfg.mode
-            self.stations.clear(); self.heard.clear(); self.live.clear(); self.wx.clear(); self.roles.clear(); self.raw.clear()
+            self.stations.clear(); self.heard.clear(); self.live.clear(); self.wx.clear(); self.roles.clear(); self.raw.clear(); self.trails.clear()
             self.table.setRowCount(0)
             self._load_stations()
         self.tile_cache.max_bytes = self.cfg.map_cache_mb * 1024 * 1024
@@ -424,6 +428,7 @@ class MainWindow(QMainWindow):
         self.share_note = ""
         if self.remote_mode:
             self.radio.stop()
+            self.meter.setValue(0)
             self.remote_ident, self._synced = None, False
             self.remote.start(self.cfg.remote_url, self.cfg.remote_token)
             self.status.setText(f"Connecting to {self.cfg.remote_url}...")
@@ -520,6 +525,9 @@ class MainWindow(QMainWindow):
                 self._plot_me()
                 for p in self.stations.values():
                     self._plot(p)
+        elif "level" in ev:
+            self.meter.setValue(int(float(ev["level"]) * 100))
+            self.meter_idle.start()
         elif "snapshot" in ev:
             self._merge_saved(ev["snapshot"])
         elif ev.get("sync"):
@@ -542,6 +550,17 @@ class MainWindow(QMainWindow):
         if p.kind == "message" and not p.text.startswith("ack") and not relay:  # a relayed one is someone else's message
             self._log_message("bulletin" if aprs.is_bulletin(p.to) else "direct", f"{stamp}  me -> {p.to}: {p.text}")
 
+    def _on_level(self, v: float) -> None:
+        self.meter.setValue(int(v * 100))
+        now = time.monotonic()
+        if now - self._level_sent >= 0.1 and self.hub.count():  # clients meter it too, ten times a second at most
+            self._level_sent = now
+            self.hub.publish({"level": round(v, 2)}, False)
+
+    def _remote_state(self, text: str) -> None:
+        self.status.setText(text)
+        self.meter.setValue(0)
+
     def _map_ready(self) -> None:
         self.map.loadFinished.disconnect(self._map_ready)
         self._map_loaded = True
@@ -551,7 +570,7 @@ class MainWindow(QMainWindow):
 
     def _plot_me(self, center: bool = False) -> None:
         me = self.ident
-        if me.lat or me.lon:
+        if (me.lat or me.lon) and self._map_loaded:
             icon, _, kind = aprs.classify(me.symbol)
             info = [["Position", f"{me.lat:.5f}, {me.lon:.5f}"], ["Symbol", f"{me.symbol} ({kind})"],
                     ["Comment", me.comment], ["Path", me.path], ["", "This is you" if not self.remote_mode else "The radio you are following"]]
@@ -587,7 +606,7 @@ class MainWindow(QMainWindow):
             self.table.setRowHidden(r, not self._visible(self.table.item(r, 0).text()))
 
     def _plot(self, p: aprs.Packet) -> None:
-        if p.lat is not None:
+        if p.lat is not None and self._map_loaded:  # _map_ready plots everything once the page is up
             via = ",".join(str(a) for a in p.frame.path)
             stale = p.source not in self.live
             icon, cls, kind = aprs.classify(p.symbol, bool(self.wx.get(p.source)), self.roles.get(p.source, set()))
@@ -604,7 +623,8 @@ class MainWindow(QMainWindow):
             label = json.dumps(f"{p.source} {temp}" if self.cfg.map_filter == "weather" and temp else p.source)
             name = json.dumps(p.source)
             self._js(f"setStation({name},{p.lat},{p.lon},{label},false,{json.dumps(info)},{json.dumps(stale)},"
-                     f"{json.dumps(icon)},{json.dumps(cls)},{json.dumps(segs)},{json.dumps(self._visible(p.source))})")
+                     f"{json.dumps(icon)},{json.dumps(cls)},{json.dumps(segs)},{json.dumps(self._visible(p.source))},"
+                     f"{json.dumps(trails.line(self.trails.get(p.source, [])))})")
 
     def _pos(self, call: str) -> tuple[float, float] | None:
         p = self.stations.get(call)
@@ -644,6 +664,8 @@ class MainWindow(QMainWindow):
                 self.stations[p.source], self.raw[p.source] = p, raw
                 self.heard[p.source] = heard
                 self.wx[p.source] = rec.get("wx") or {}
+                theirs, ours = trails.clean(saved.get("trails", {}).get(p.source)), self.trails.get(p.source, [])
+                self.trails[p.source] = theirs if len(theirs) > len(ours) else (ours or trails.Trail([[p.lat, p.lon, int(heard)]]))
                 self._update_table(p, self._when(heard))
                 if self._map_loaded:
                     self._plot(p)
@@ -656,7 +678,8 @@ class MainWindow(QMainWindow):
         recent = sorted(list(self.stations), key=lambda c: self.heard.get(c, 0), reverse=True)[:500]
         return {"stations": [{"raw": self.raw[c].hex(), "heard": self.heard.get(c, 0), "wx": dict(self.wx.get(c, {}))}
                              for c in recent if c in self.raw],
-                "roles": {c: sorted(r) for c, r in list(self.roles.items())}}
+                "roles": {c: sorted(r) for c, r in list(self.roles.items())},
+                "trails": {c: list(self.trails[c]) for c in recent if len(self.trails.get(c, ())) >= 2}}
 
     def _save_stations(self, remote: bool | None = None) -> None:
         path = (STATIONS_REMOTE_PATH if remote else STATIONS_PATH) if remote is not None else self.store
@@ -710,6 +733,8 @@ class MainWindow(QMainWindow):
         if p.kind == "position":
             if p.source not in self.stations and self.cfg.alert_new_station and not replay:
                 self.alerts.play("station")
+            if p.lat is not None:
+                trails.extend(self.trails.setdefault(p.source, trails.Trail()), p.lat, p.lon, now)
             self.stations[p.source], self.raw[p.source] = p, raw
         known = p.source in self.stations
         if p.kind == "position" or (p.kind == "weather" and known):
@@ -831,6 +856,28 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentIndex(1)
             self.to.setText(call)
             self.text.setFocus()
+        elif what == "clear-inactive":
+            self._forget_inactive()
+
+    def _forget_inactive(self) -> None:
+        """The legend's button: drop the stations not heard since we started (shown grey) from the map, the
+        table and the file. A followed server remembers them too, and sends them again when we reconnect."""
+        gone = sorted(c for c in self.stations if c not in self.live)
+        if not gone:
+            return QMessageBox.information(self, "Clear inactive", "Every station on the map was heard since the program started.")
+        if QMessageBox.question(self, "Clear inactive", f"Forget the {len(gone)} stations not heard since the program started?"
+                                ) != QMessageBox.StandardButton.Yes:
+            return
+        for c in gone:
+            for d in (self.stations, self.raw, self.heard, self.wx, self.roles, self.trails):
+                d.pop(c, None)
+        names = set(gone)
+        for r in reversed(range(self.table.rowCount())):
+            if self.table.item(r, 0).text() in names:
+                self.table.removeRow(r)
+        self._js(f"removeStations({json.dumps(gone)})")
+        self._save_stations()
+        self.status.setText(f"Forgot {len(gone)} stations")
 
     def closeEvent(self, e) -> None:
         self._save_stations()

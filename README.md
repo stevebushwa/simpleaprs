@@ -30,8 +30,14 @@ The install has two optional parts: `[gui]` (PySide6, the desktop app) and `[ser
   its MapLibre style and PMTiles locally, since N.O.M.A.D. sends no CORS headers. Settings > "Cache map tiles" keeps what
   it fetches in `~/.cache/simpleaprs/tiles` (size-limited, least recently used goes first), so tiles load fast and the
   map still draws when the server is unreachable. A changed map file on the server drops its cached tiles.
+- **Legend and tracks**: the map's top-left legend says what the colours mean (collapse it with its title). A station that
+  moves leaves a green track behind it (a new point once it has moved about 15 m, the last 300 kept, saved with the
+  remembered stations). Stations shown grey were not heard since the program started; **Clear inactive (N)** in the legend
+  forgets them (after asking) from the map, the list and the saved file. A followed server still remembers them and sends
+  them again the next time you connect.
 - Forces the X11 (xcb) Qt platform: WebGL hangs in QtWebEngine under native Wayland here.
 - **Sharing**: Settings > "Share this radio on the network" serves what the radio hears over HTTP (default port 8073).
+  The RX level meter follows too: a client shows the audio level of the radio it is watching.
   Another simpleaprs set to "Connect to another simpleaprs" (server address + token) follows it: same map, stations,
   packets and messages, no radio needed. The token is required to watch unless you untick it, and always required to
   transmit; clients can only ask for a beacon or a message, never send raw frames. Traffic is plain HTTP, so keep it

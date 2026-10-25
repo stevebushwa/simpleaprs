@@ -281,3 +281,14 @@ def test_an_unconfigured_server_runs_and_will_not_transmit(tmp_path, monkeypatch
         assert len(s.radio.sent) == 1
     finally:
         s.stop()
+
+
+def test_forget_inactive_needs_a_session_and_forgets_grey_stations(srv):
+    from simpleaprs import aprs
+    srv.tracker.on_frame(aprs.make_frame("OLD1", aprs.build_position(41.7, -72.7, "/>", ""), "WIDE1-1").encode(), 1.0)
+    srv.tracker.live.clear()  # as if it had been loaded from the file
+    assert call(srv, "POST", "/api/forget-inactive", {})[0] == 401
+    assert "OLD1" in srv.tracker.stations
+    cookie, _ = setup(srv)
+    st, data, _ = call(srv, "POST", "/api/forget-inactive", {}, cookie=cookie)
+    assert (st, data["removed"]) == (200, 1) and "OLD1" not in srv.tracker.stations

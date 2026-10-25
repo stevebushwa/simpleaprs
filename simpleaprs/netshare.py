@@ -2,7 +2,8 @@
 
 GET  /api/events  Server-Sent Events: a hello (who this station is), a snapshot of the stations the
                   server remembers, a replay of recent traffic, a {"sync": true} marker, then everything
-                  heard or sent from then on.
+                  heard or sent from then on, and {"level": 0..1} every so often while audio comes in
+                  (the radio's RX level, for a meter; not part of the replay).
 POST /api/tx      Ask the server to beacon, or send a message or bulletin, through its radio (token always required).
 
 Clients get frames, not decoded packets, so they run the same code on them as the radio would.
