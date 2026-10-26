@@ -43,6 +43,10 @@ echo "=== AppDir"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/lib"
 cp -a "$BUILD/pyi/simpleaprs" "$APPDIR/usr/lib/simpleaprs"
+# libgbm must match the Mesa drivers of the machine it runs on. The copy PyInstaller picked up from the build
+# host is too old for a newer Mesa ("did not find extension DRI_Mesa", "Failed to initialize GBM device",
+# and the map stays blank), so use the one the system has.
+find "$APPDIR/usr/lib/simpleaprs" -name 'libgbm.so*' -delete
 cp "$ROOT/packaging/simpleaprs.desktop" "$APPDIR/simpleaprs.desktop"
 cp "$ROOT/packaging/simpleaprs.svg" "$APPDIR/simpleaprs.svg"
 ln -sf simpleaprs.svg "$APPDIR/.DirIcon"
