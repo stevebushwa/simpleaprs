@@ -370,7 +370,7 @@
   };
 
   let synced = false;
-  const note = text => { $("activity").textContent = new Date().toLocaleTimeString([], {hour12: false}) + "  " + text; };
+  const logActivity = text => { $("activity").textContent = new Date().toLocaleTimeString([], {hour12: false}) + "  " + text; };
   const handle = ev => {
     if (ev.sync) { synced = true; return idle(); }
     switch (ev.type) {
@@ -393,10 +393,10 @@
         document.querySelector("#rx i").style.width = Math.round(Math.min(1, ev.level) * 100) + "%";
         clearTimeout(handle.rx); handle.rx = setTimeout(() => document.querySelector("#rx i").style.width = "0", 1500);
         break;
-      case "station": onStation(ev); if (synced) note(`Heard ${ev.call}`); break;
+      case "station": onStation(ev); if (synced) logActivity(`Heard ${ev.call}`); break;
       case "gone": forget(ev.calls); break;
-      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); if (synced && ev.tx) note("Transmitted a packet"); break;
-      case "message": addLine($("msgs"), ev.t, ev.text, ev.kind || "direct"); if (synced) note(ev.text.length > 70 ? ev.text.slice(0, 70) + "..." : ev.text); break;
+      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); if (synced && ev.tx) logActivity("Transmitted a packet"); break;
+      case "message": addLine($("msgs"), ev.t, ev.text, ev.kind || "direct"); if (synced) logActivity(ev.text.length > 70 ? ev.text.slice(0, 70) + "..." : ev.text); break;
     }
   };
   const savedTab = store.get("tab"); if (savedTab) document.querySelector(`nav button[data-tab=${savedTab}]`)?.click();
