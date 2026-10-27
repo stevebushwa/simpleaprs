@@ -76,5 +76,40 @@ def test_explain():
     assert "could not decode (looked like K5X>APRS)" in explain(0, 2, 0, 0, 600, "K5X>APRS")
     assert "weak or noisy" in explain(0, 2, 0, 0, 600)
     assert "lost or added" in explain(0, 0, 2, 0, 600)
-    assert "clipping" in explain(1, 0, 0, 300, 600)
+    assert "clipping" in explain(1, 0, 0, 20, 40)
+    assert explain(1, 0, 0, 1, 40) == ""  # one clipped block among many is not a pattern
     assert "1 decoded fine" in explain(1, 1, 0, 0, 600)
+
+
+def hear_radio(blocks):
+    """Run tenth-second blocks of audio through a SoundRadio's level measuring and return it."""
+    from simpleaprs.soundio import SoundRadio
+    r = SoundRadio(lambda raw: None, on_level=lambda level: None)
+    for b in blocks:
+        r._measure(np.clip(b, -1, 1).astype(np.float32))
+    return r
+
+
+def test_clipped_packets_are_noticed_over_open_squelch_hiss():
+    # hiss at rms 0.07 the whole time, with a clipped one-second packet every 15 seconds
+    rng = np.random.default_rng(3)
+    hiss = lambda: rng.normal(0, 0.07, 4800)
+    packet = lambda: np.sign(np.sin(np.arange(4800) * 0.3)) * 1.5
+    blocks = []
+    for _ in range(4):
+        blocks += [hiss() for _ in range(140)] + [packet() for _ in range(10)]
+    r = hear_radio(blocks)
+    s = r.rx_stats()
+    assert s["clipped"] >= 30 and s["loud"] < 60  # the hiss itself is not counted as signal
+    assert s["peak"] == 1.0
+    assert "clipping" in explain(0, 0, 0, s["clipped"], s["loud"])
+
+
+def test_hiss_and_clean_packets_are_not_clipping():
+    rng = np.random.default_rng(4)
+    blocks = [rng.normal(0, 0.07, 4800) for _ in range(300)] + [0.5 * np.sin(np.arange(4800) * 0.3) for _ in range(10)]
+    r = hear_radio(blocks)
+    s = r.rx_stats()
+    assert s["loud"] >= 8 and s["clipped"] == 0
+    assert 0.45 < s["peak"] < 0.55
+    assert r.rx_stats()["peak"] == 0.0  # the peak is since the last look
