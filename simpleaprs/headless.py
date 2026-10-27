@@ -310,11 +310,13 @@ class Server:
     def _rx_report(self) -> None:
         """Say once a minute, in the log and on the page, if packets were heard but not decoded."""
         now = self.radio.rx_stats()
-        d = {k: now[k] - self._rx_seen.get(k, 0) for k in ("ok", "corrupt", "slip", "clipped", "chunks")}
+        d = {k: now[k] - self._rx_seen.get(k, 0) for k in ("ok", "corrupt", "slip", "clipped", "loud")}
         self._rx_seen = now
         note = rxdiag.explain(**d, last_bad=now["last_bad"]) if not self.radio_note else ""
         if note:
             log(note)
+        elif d["loud"] and not self.radio_note:
+            log(f"Receive: loudest audio this minute was {now['peak']:.0%} of full scale")
         if note != self.rx_note:
             self.rx_note = note
             self._publish_status()

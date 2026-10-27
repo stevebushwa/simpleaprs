@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 
-def explain(ok: int, corrupt: int, slip: int, clipped: int, chunks: int, last_bad: str = "") -> str:
-    """What was heard in a stretch of `chunks` tenth-second audio blocks, of which `clipped` hit full scale.
+def explain(ok: int, corrupt: int, slip: int, clipped: int, loud: int, last_bad: str = "") -> str:
+    """What was heard in a stretch where `loud` tenth-second audio blocks held a signal, of which `clipped` hit full scale.
     "" when there is nothing worth saying."""
     bad = corrupt + slip
     parts = []
@@ -12,7 +12,7 @@ def explain(ok: int, corrupt: int, slip: int, clipped: int, chunks: int, last_ba
         parts.append(f"heard {bad} packet{'s' * (bad != 1)} it could not decode{who}: "
                      + ("bits were corrupted, so the signal is weak or noisy" if corrupt >= slip else
                         "bits were lost or added, so the signal is weak or the audio is distorted"))
-    if chunks and clipped / chunks > 0.2:
+    if clipped >= 2 and clipped / loud > 0.2:
         parts.append("the input audio is clipping, so turn the radio volume or the input level down")
     if not parts:
         return ""

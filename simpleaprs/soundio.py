@@ -49,11 +49,28 @@ class SoundRadio:
         self._worker: threading.Thread | None = None
         self._lock = threading.Lock()
         self.transmitting = False
-        self.chunks = self.clipped = 0  # tenth-second input blocks, and how many of them hit full scale
+        # tenth-second input blocks well above the noise (a signal, not hiss) and how many of those hit full scale
+        self.loud = self.clipped = 0
+        self._floor = 0.0  # running estimate of the noise level between packets
+        self._peak = 0.0   # loudest sample since rx_stats() was last called
 
     def rx_stats(self) -> dict:
-        """Running totals since start: frames decoded, damaged ones heard, and the input clipping counts."""
-        return {**self._demod._hdlc.stats, "chunks": self.chunks, "clipped": self.clipped, "last_bad": self._demod._hdlc.last_bad}
+        """Running totals since start: frames decoded, damaged ones heard, and the input clipping counts.
+        "peak" is the loudest sample (0..1) since the previous call."""
+        peak, self._peak = self._peak, 0.0
+        return {**self._demod._hdlc.stats, "loud": self.loud, "clipped": self.clipped, "peak": peak,
+                "last_bad": self._demod._hdlc.last_bad}
+
+    def _measure(self, x: np.ndarray) -> None:
+        """Count a block as a signal if it is well above the noise floor, and as clipped if it also hit full scale.
+        The floor rises slowly and falls at once, so it settles on the quiet between packets even when the
+        squelch is open and hiss alone is loud."""
+        rms, peak = float(np.sqrt(np.mean(x * x))), float(np.abs(x).max())
+        self._floor = min(rms, self._floor * 1.01) if self._floor else rms
+        self._peak = max(self._peak, peak)
+        if rms > max(0.02, 2.5 * self._floor):
+            self.loud += 1
+            self.clipped += peak >= 0.98
 
     def start(self, input_name: str = "", output_name: str = "", auto_gain: bool = False) -> bool:
         """Open the audio input. False if there is no usable input device."""
@@ -94,11 +111,9 @@ class SoundRadio:
         while (data := self._chunks.get()) is not None:
             x = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768
             if x.size:
-                peak = float(np.abs(x).max())
-                self.on_level(min(1.0, peak * 2))
+                self.on_level(min(1.0, float(np.abs(x).max()) * 2))
                 if not self.transmitting:
-                    self.chunks += 1
-                    self.clipped += peak >= 0.98
+                    self._measure(x)
             if self.transmitting:  # half duplex: don't decode our own audio
                 continue
             self._gain.feed(x)
