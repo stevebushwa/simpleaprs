@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 
-from . import aprs
+from . import aprs, rxdiag
 from .ax25 import Frame
 from . import webconfig
 from .auth import Auth
@@ -152,6 +152,9 @@ class Server:
         self._igate_state = ""
         self.stopping = False
         self.next_beacon = self.next_save = 0.0
+        self.next_rx_report = 0.0
+        self.rx_note = ""  # why the last minute of listening decoded less than it heard, "" if nothing to say
+        self._rx_seen: dict = {}
 
     def start(self) -> bool:
         c = self.cfg
@@ -184,6 +187,7 @@ class Server:
         print("  Ctrl+C to stop\n", flush=True)
         now = time.monotonic()
         self.next_save = now + 30
+        self.next_rx_report = now + 60
         self.next_beacon = now + c.beacon_minutes * 60 if c.beacon_minutes else 0.0
         return True
 
@@ -221,7 +225,7 @@ class Server:
 
     def status(self) -> dict:
         return {"radio": self.radio_note or "Listening", "radio_ok": not self.radio_note, "igate": self.igate_text,
-                "digi": self.digi is not None, "configured": bool(self.cfg.callsign), "needs_login": not self.auth.configured}
+                "digi": self.digi is not None, "rx_note": self.rx_note, "configured": bool(self.cfg.callsign), "needs_login": not self.auth.configured}
 
     def status_event(self) -> dict:
         return {"type": "status", **self.status()}
@@ -299,6 +303,21 @@ class Server:
         if now >= self.next_save:
             self.next_save = now + 30
             self.tracker.save()
+        if now >= self.next_rx_report:
+            self.next_rx_report = now + 60
+            self._rx_report()
+
+    def _rx_report(self) -> None:
+        """Say once a minute, in the log and on the page, if packets were heard but not decoded."""
+        now = self.radio.rx_stats()
+        d = {k: now[k] - self._rx_seen.get(k, 0) for k in ("ok", "corrupt", "slip", "clipped", "chunks")}
+        self._rx_seen = now
+        note = rxdiag.explain(**d, last_bad=now["last_bad"]) if not self.radio_note else ""
+        if note:
+            log(note)
+        if note != self.rx_note:
+            self.rx_note = note
+            self._publish_status()
 
     def stop(self) -> None:
         self.stopping = True

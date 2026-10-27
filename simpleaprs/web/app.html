@@ -330,9 +330,9 @@
   let allowTx = false, centered = false, me = null;
   const setBusy = () => { for (const el of [$("beacon"), $("send").querySelector("button"), $("bulletin").querySelector("button")]) el.disabled = !allowTx; };
   const say = (text, ms = 6000) => { $("status").textContent = text; clearTimeout(say.t); if (ms) say.t = setTimeout(idle, ms); };
-  let radio = {ok: true, text: ""}, igateText = "", welcomed = false;
+  let radio = {ok: true, text: "", note: ""}, igateText = "", welcomed = false;
   const idle = () => {
-    $("status").textContent = !me ? "Connecting..." : !radio.ok ? `No radio: ${radio.text} (see Settings)` : allowTx ? "Listening" : "Listening (view only)";
+    $("status").textContent = !me ? "Connecting..." : !radio.ok ? `No radio: ${radio.text} (see Settings)` : (allowTx ? "Listening" : "Listening (view only)") + (radio.note ? ` - ${radio.note}` : "");
     $("igate").textContent = igateText;
   };
   const post = async body => {
@@ -385,7 +385,7 @@
         }
         break;
       case "status":
-        radio = {ok: ev.radio_ok, text: ev.radio}; igateText = ev.igate || ""; idle();
+        radio = {ok: ev.radio_ok, text: ev.radio, note: ev.rx_note || ""}; igateText = ev.igate || ""; idle();
         if (!ev.configured && !welcomed) { welcomed = true; document.querySelector("nav button[data-tab=settings]").click(); }
         if (schema) { schema.status = ev; if (!$("settings").hidden && ["Radio", "iGate"].includes(group)) renderSettings(); }
         break;

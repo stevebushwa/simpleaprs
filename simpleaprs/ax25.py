@@ -1,6 +1,7 @@
 """AX.25 UI frames and HDLC bit-level framing."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -92,10 +93,33 @@ def hdlc_bits(frame: bytes, preamble_flags: int = 30, tail_flags: int = 4) -> li
     return bits + FLAG * tail_flags
 
 
+def plausible_header(data: bytes) -> str:
+    """"SRC>DST" if the start of data reads as AX.25 addresses, else "". Random noise essentially never does,
+    so a frame that fails its checksum but passes this is a real packet that arrived damaged."""
+    if len(data) < 15:
+        return ""
+    calls = []
+    for i in range(0, min(len(data) - 6, 70), 7):
+        raw = data[i:i + 7]
+        text = bytes(c >> 1 for c in raw[:6])
+        if raw[6] & 0x60 != 0x60 or not re.fullmatch(rb"[A-Z0-9]+ *", text):
+            return ""
+        calls.append(text.decode().strip() + (f"-{(raw[6] >> 1) & 0xF}" if (raw[6] >> 1) & 0xF else ""))
+        if raw[6] & 1:
+            break
+    else:
+        return ""
+    return f"{calls[1]}>{calls[0]}" if len(calls) >= 2 else ""
+
+
 class HdlcDecoder:
-    """Feed it NRZI-decoded bits; yields frames whose FCS checks out."""
+    """Feed it NRZI-decoded bits; yields frames whose FCS checks out.
+    stats counts what else was heard: corrupt = a packet whose checksum failed, slip = one that lost or gained
+    a bit; last_bad is who it looked like it came from."""
 
     def __init__(self) -> None:
+        self.stats = {"ok": 0, "corrupt": 0, "slip": 0}
+        self.last_bad = ""
         self._reset()
 
     def _reset(self) -> None:
@@ -116,13 +140,17 @@ class HdlcDecoder:
             result = None
             if self.active and len(self.cur) >= 7:
                 body = self.cur[:-7]  # drop the flag's leading 0 and six 1s
-                if len(body) % 8 == 0 and len(body) >= 8 * 17:
+                if len(body) >= 8 * 17:
                     data = bytes(
                         sum(b << k for k, b in enumerate(body[i:i + 8]))
-                        for i in range(0, len(body), 8)
+                        for i in range(0, len(body) - 7, 8)
                     )
-                    if crc16_x25(data[:-2]).to_bytes(2, "little") == data[-2:]:
+                    if len(body) % 8 == 0 and crc16_x25(data[:-2]).to_bytes(2, "little") == data[-2:]:
                         result = data[:-2]
+                        self.stats["ok"] += 1
+                    elif who := plausible_header(data):
+                        self.stats["corrupt" if len(body) % 8 == 0 else "slip"] += 1
+                        self.last_bad = who
             self.cur = []
             self.active = True
             return result

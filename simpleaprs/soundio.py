@@ -49,6 +49,11 @@ class SoundRadio:
         self._worker: threading.Thread | None = None
         self._lock = threading.Lock()
         self.transmitting = False
+        self.chunks = self.clipped = 0  # tenth-second input blocks, and how many of them hit full scale
+
+    def rx_stats(self) -> dict:
+        """Running totals since start: frames decoded, damaged ones heard, and the input clipping counts."""
+        return {**self._demod._hdlc.stats, "chunks": self.chunks, "clipped": self.clipped, "last_bad": self._demod._hdlc.last_bad}
 
     def start(self, input_name: str = "", output_name: str = "", auto_gain: bool = False) -> bool:
         """Open the audio input. False if there is no usable input device."""
@@ -89,7 +94,11 @@ class SoundRadio:
         while (data := self._chunks.get()) is not None:
             x = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768
             if x.size:
-                self.on_level(float(min(1.0, np.abs(x).max() * 2)))
+                peak = float(np.abs(x).max())
+                self.on_level(min(1.0, peak * 2))
+                if not self.transmitting:
+                    self.chunks += 1
+                    self.clipped += peak >= 0.98
             if self.transmitting:  # half duplex: don't decode our own audio
                 continue
             self._gain.feed(x)
