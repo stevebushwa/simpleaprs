@@ -22,7 +22,9 @@
   .dot.on { background: var(--ok); }
   #status, #radio { color: var(--dim); font-size: 13px; }
   .grow { flex: 1; }
-  #notice { background: #fff3cd; color: #5b4500; padding: 5px 12px; font-size: 13px; }
+  #notice { position: fixed; z-index: 20; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: min(480px, 92vw);
+            background: #fff3cd; color: #5b4500; padding: 6px 12px; border-radius: 6px; font-size: 13px; box-shadow: 0 2px 8px #0004; }
+  #notice[hidden] { display: none; }
   main { display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
   #mapbox { position: relative; min-height: 0; }
   #map { position: absolute; inset: 0; }
