@@ -16,6 +16,10 @@ from PySide6.QtWidgets import (
     QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from piwebkit.hub import Hub
+from piwebkit.server import lan_ip, new_token
+from piwebkit.tilecache import TileCache
+
 from . import aprs, icons, trails
 from .alerts import Alerts
 from .audio import Radio, device_names
@@ -23,10 +27,9 @@ from .ax25 import Frame
 from .config import STATIONS_PATH, STATIONS_REMOTE_PATH, Config
 from .digipeater import Digipeater
 from .igate import IGate, passcode
-from .mapserver import MapServer
+from .mapserver import MapServer, tile_cache
 from .netclient import RemoteClient
-from .netshare import Hub, ShareServer, lan_ip, new_token
-from .tilecache import TileCache
+from .netshare import ShareServer
 
 
 MESSAGE_FILTERS = [("All messages", "all"), ("Direct messages", "direct"), ("Bulletins", "bulletin")]
@@ -289,7 +292,7 @@ class MainWindow(QMainWindow):
         self.save_timer = QTimer(self, singleShot=True, interval=5000)
         self.save_timer.timeout.connect(self._save_stations)
         self.server: MapServer | None = None
-        self.tile_cache = TileCache(max_bytes=self.cfg.map_cache_mb * 1024 * 1024)
+        self.tile_cache = tile_cache(self.cfg.map_cache_mb)
         self.hub = Hub()  # traffic replay/fan-out for network clients
         self.share: ShareServer | None = None
         self.share_note = ""

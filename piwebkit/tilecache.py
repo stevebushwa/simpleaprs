@@ -14,7 +14,6 @@ import threading
 import time
 from pathlib import Path
 
-DEFAULT_DIR = Path.home() / ".cache" / "simpleaprs" / "tiles"
 MAX_ENTRY = 16 * 1024 * 1024  # larger responses are streamed through, not cached
 
 
@@ -23,7 +22,7 @@ def _h(text: str) -> str:
 
 
 class TileCache:
-    def __init__(self, root: Path = DEFAULT_DIR, max_bytes: int = 500 * 1024 * 1024) -> None:
+    def __init__(self, root: Path, max_bytes: int = 500 * 1024 * 1024) -> None:
         self.root, self.max_bytes = Path(root), max_bytes
         self._lock = threading.Lock()
         self._versions: dict[str, str] = {}

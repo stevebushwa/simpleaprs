@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
-    from simpleaprs.netshare import Hub
+    from piwebkit.hub import Hub
 
     from .node import MeshNode
 
@@ -56,7 +56,7 @@ def http_get(url: str) -> bytes:
 def run_esptool(cmd: list[str], on_line: Callable[[str], None]) -> int:
     """Run an esptool command, handing each line (or progress update) of its output on. Returns its exit code."""
     if importlib.util.find_spec("esptool") is None:
-        raise FirmwareError("esptool isn't installed here:  pip install 'simpleaprs[mesh]'")
+        raise FirmwareError("esptool isn't installed here:  pip install 'simpleaprs[mesh]'  (the mesh extra)")
     p = subprocess.Popen([sys.executable, "-m", "esptool", *cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     timer = threading.Timer(FLASH_TIMEOUT_S, p.kill)
     timer.start()

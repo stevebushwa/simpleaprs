@@ -15,10 +15,11 @@ from simplemesh.demo import FakeMesh, contact, key_for  # noqa: E402
 from simplemesh.node import MeshError, MeshNode, battery_percent  # noqa: E402
 from simplemesh.store import MAX_MESSAGES, Store  # noqa: E402
 from simplemesh.webui import MeshWeb, WEB  # noqa: E402
-from simpleaprs.auth import Auth  # noqa: E402
-from simpleaprs.mapserver import WEB as APRS_WEB  # noqa: E402
-from simpleaprs.mapserver import MapProxy  # noqa: E402
-from simpleaprs.netshare import Hub, ShareServer  # noqa: E402
+from piwebkit.auth import Auth  # noqa: E402
+from piwebkit.hub import Hub  # noqa: E402
+from piwebkit.maps import WEB as SHARED_WEB  # noqa: E402
+from piwebkit.maps import MapProxy  # noqa: E402
+from piwebkit.server import WebServer  # noqa: E402
 
 ANNA = contact("Anna", 1, 30.01, -97.01, hops=1, path="ab")
 HILL = contact("Hilltop", 2, 30.05, -97.05, hops=0)
@@ -362,9 +363,9 @@ PW = "correct horse battery"
 def web(tmp_path, monkeypatch):
     monkeypatch.setattr("simplemesh.config.PATH", tmp_path / "config.json")
     r = Rig(tmp_path).connect()
-    proxy = MapProxy("", None, web=(WEB, APRS_WEB))
+    proxy = MapProxy("", None, web=(WEB, SHARED_WEB))
     ui = MeshWeb(r.hub, r.node, proxy, Auth(tmp_path / "auth.json"), r.cfg)
-    srv = ShareServer(Hub(), 0, "unused-token", True, False, lambda: {}, lambda req: None, web=ui)
+    srv = WebServer(0, ui)
     r.srv = srv  # type: ignore[attr-defined]
     yield r
     srv.stop()

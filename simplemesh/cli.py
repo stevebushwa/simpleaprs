@@ -22,12 +22,13 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--serial-port", metavar="DEV", help="the node's serial device, e.g. /dev/ttyACM0 (default: find it)")
     ap.add_argument("--baud", type=int, help="serial speed, default 115200")
     ap.add_argument("--port", type=int, help="web port to serve on, default 8074")
-    ap.add_argument("--nomad-url", metavar="URL", help="Project N.O.M.A.D. map server (default: the one simpleaprs uses)")
+    ap.add_argument("--nomad-url", metavar="URL", help="Project N.O.M.A.D. map server, default http://localhost:8080; blank for no map")
+    ap.add_argument("--home", metavar="LAT,LON", help="where the map starts when nothing on it has a position")
     ap.add_argument("--save", action="store_true", help="keep the options above as the saved settings")
     ap.add_argument("--reset-login", action="store_true", help="forget the web page's login: the next visitor creates a new one")
     ap.add_argument("--list-ports", action="store_true", help="print the serial devices that could be the node, and exit")
     ap.add_argument("--demo", action="store_true", help="no radio: a made-up mesh, to look at the page (nothing is saved)")
-    ap.add_argument("--demo-at", metavar="LAT,LON", help="(with --demo) where the made-up mesh is (default: where simpleaprs is set)")
+    ap.add_argument("--demo-at", metavar="LAT,LON", help="(with --demo) where the made-up mesh is (default: --home, else the middle of the US)")
     ap.add_argument("--allow-host", action="append", default=[], metavar="NAME",
                     help="also accept requests addressed to this host name (the server refuses names that don't look like "
                          "a LAN machine); can be repeated")
@@ -35,11 +36,12 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def run(cfg, demo: bool, allowed: tuple[str, ...], demo_at: tuple[float, float] | None = None) -> int:
-    from simpleaprs.auth import Auth
-    from simpleaprs.mapserver import WEB as APRS_WEB
-    from simpleaprs.mapserver import MapProxy
-    from simpleaprs.netshare import Hub, ShareServer, lan_ip, new_token
-    from simpleaprs.tilecache import TileCache
+    from piwebkit.auth import Auth
+    from piwebkit.hub import Hub
+    from piwebkit.maps import WEB as SHARED_WEB
+    from piwebkit.maps import MapProxy
+    from piwebkit.server import WebServer, lan_ip
+    from piwebkit.tilecache import TileCache
 
     from . import config
     from .node import MeshNode, candidate_ports
@@ -57,19 +59,18 @@ def run(cfg, demo: bool, allowed: tuple[str, ...], demo_at: tuple[float, float] 
     connector, fetch, flasher = None, None, None
     if demo:
         from .demo import DemoMesh, demo_fetch, demo_flasher
-        lat, lon = demo_at or config.home_position() or (39.50, -98.35)
+        lat, lon = demo_at or cfg.home or (39.50, -98.35)
         fetch, flasher = demo_fetch, demo_flasher
 
         async def connector(port, baud):
             return DemoMesh(lat, lon)
     node = MeshNode(cfg, hub, store, connector=connector, ports=(lambda: ["demo"]) if demo else candidate_ports,
                     fetch=fetch, flasher=flasher)
-    cache = TileCache(max_bytes=cfg.map_cache_mb * 1024 * 1024) if cfg.map_cache else None
-    proxy = MapProxy(config.map_server(cfg).rstrip("/"), cache, web=(WEB, APRS_WEB))
+    cache = TileCache(config.TILES_DIR, max_bytes=cfg.map_cache_mb * 1024 * 1024) if cfg.map_cache else None
+    proxy = MapProxy(cfg.nomad_url, cache, web=(WEB, SHARED_WEB))
     web = MeshWeb(hub, node, proxy, auth, cfg)
     try:
-        server = ShareServer(Hub(), cfg.web_port, new_token(), True, False, lambda: {}, lambda req: None, web=web,
-                             allowed_hosts=allowed)
+        server = WebServer(cfg.web_port, web, allowed_hosts=allowed, banner="simplemesh\n")
     except OSError as e:
         print(f"Can't serve on port {cfg.web_port}: {e}", file=sys.stderr)
         return 1
@@ -88,6 +89,15 @@ def run(cfg, demo: bool, allowed: tuple[str, ...], demo_at: tuple[float, float] 
     return 0
 
 
+def latlon(text: str, flag: str) -> tuple[float, float]:
+    try:
+        lat, lon = (float(v) for v in text.split(","))
+        assert -90 <= lat <= 90 and -180 <= lon <= 180
+    except (ValueError, AssertionError):
+        sys.exit(f"{flag} takes a latitude and longitude, like 29.2,-98.7")
+    return lat, lon
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse(argv)
     if not sys.platform.startswith("linux"):
@@ -95,7 +105,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         import meshcore  # noqa: F401
     except ImportError:
-        sys.exit("simplemesh needs the meshcore library:  pip install 'simpleaprs[mesh]'")
+        sys.exit("simplemesh needs the meshcore library:  pip install 'simpleaprs[mesh]'  (the mesh extra)")
     from .config import AUTH_PATH, PATH, Config
     from .node import all_ports, candidate_ports
 
@@ -107,23 +117,19 @@ def main(argv: list[str] | None = None) -> None:
             print("Also present (the Pi's own UART; choose one in Settings or with --serial-port):\n  " + "\n  ".join(extra))
         return
     cfg = Config.load()
+    if args.home:
+        cfg.home_lat, cfg.home_lon = latlon(args.home, "--home")
     for opt, field in (("serial_port", "serial_port"), ("baud", "baud"), ("port", "web_port"), ("nomad_url", "nomad_url")):
         if getattr(args, opt) is not None:
             setattr(cfg, field, getattr(args, opt))
     if args.reset_login:
-        from simpleaprs.auth import Auth
+        from piwebkit.auth import Auth
         Auth(AUTH_PATH).reset()
         print("The web page's login has been forgotten. Open the page to create a new one.")
     if args.save:
         cfg.save()
         print(f"Saved to {PATH}")
-    demo_at = None
-    if args.demo_at:
-        try:
-            demo_at = tuple(float(v) for v in args.demo_at.split(","))
-            assert len(demo_at) == 2
-        except (ValueError, AssertionError):
-            sys.exit("--demo-at takes a latitude and longitude, like 29.2,-98.7")
+    demo_at = latlon(args.demo_at, "--demo-at") if args.demo_at else None
     sys.exit(run(cfg, args.demo, tuple(args.allow_host), demo_at))
 
 

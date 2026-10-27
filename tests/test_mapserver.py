@@ -63,7 +63,7 @@ def test_no_map_server_set_is_a_clean_failure():
     assert Config().nomad_url == ""  # nobody's private address is baked in
     sent = []
     p = MapProxy("")
-    p._send = lambda h, code, body, ctype: sent.append(code)
+    p.send = lambda h, code, body, ctype: sent.append(code)
     p._style(None, "http://x")
     p._proxy(type("H", (), {"path": "/nomad/x.pmtiles", "headers": {}})())
     assert sent == [502, 502]

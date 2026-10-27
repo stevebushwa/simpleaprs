@@ -21,8 +21,9 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["simpleaprs", "simplemesh"]
+packages = ["piwebkit", "simpleaprs", "simplemesh"]
 
 [tool.setuptools.package-data]
+piwebkit = ["web/*"]
 simpleaprs = ["web/*", "sounds/*"]
 simplemesh = ["web/*"]

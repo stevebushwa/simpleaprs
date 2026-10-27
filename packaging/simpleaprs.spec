@@ -18,7 +18,7 @@ version = os.environ.get("SIMPLEAPRS_VERSION", "0.1.0")
 
 a = Analysis(
     [os.path.join(SPECPATH, "launcher.py")],
-    datas=collect_data_files("simpleaprs"),  # the web page, map files and alert sounds
+    datas=collect_data_files("simpleaprs") + collect_data_files("piwebkit"),  # the web page, login and map files, alert sounds
     excludes=["sounddevice"],                # the terminal server is Linux only
 )
 pyz = PYZ(a.pure)

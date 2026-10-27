@@ -4,7 +4,8 @@ import urllib.request
 
 import pytest
 
-from simpleaprs.netshare import Hub, ShareServer, validate_tx
+from piwebkit.hub import Hub
+from simpleaprs.netshare import ShareServer, validate_tx
 
 
 @pytest.fixture
@@ -133,7 +134,7 @@ def test_snapshot_sent_after_hello(make_server):
 
 # --- open access mode and the web stream (what the browser page uses) -------------------------------
 
-from simpleaprs.netshare import host_ok
+from piwebkit.server import host_ok
 
 
 class FakeWeb:

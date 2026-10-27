@@ -5,7 +5,7 @@ import json
 import pytest
 
 from simpleaprs import headless
-from simpleaprs.auth import Auth
+from piwebkit.auth import Auth
 from simpleaprs.config import Config
 
 PW = "correct horse battery"

@@ -24,7 +24,7 @@ from typing import Callable, Coroutine
 
 from meshcore import EventType, MeshCore
 
-from simpleaprs.netshare import Hub
+from piwebkit.hub import Hub
 
 from .config import Config
 from .firmware import Updater

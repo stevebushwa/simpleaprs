@@ -133,8 +133,11 @@ To start it at boot, run it as a user service (it needs no setup first, and the 
 ## simplemesh: a web page for a MeshCore node
 
 `simplemesh` is the same idea for [MeshCore](https://meshcore.co.uk): a Pi with a **companion node plugged into its USB
-serial port** serves a web page you open from any browser on the network. It lives in this repo because it reuses the
-login, the web server and the N.O.M.A.D. map proxy (and its tile cache, so both pages work offline on the same tiles).
+serial port** serves a web page you open from any browser on the network. It is its own program: it shares no code or
+files with simpleaprs. What the two web pages have in common (the login, the web server and event stream, the
+N.O.M.A.D. map proxy and its tile cache) lives in a third package, `piwebkit`, that both use. The three sit in one repo
+for now, with one rule that `tests/test_independence.py` enforces: apps import `piwebkit`, `piwebkit` imports no app, and
+the two apps never import each other, so either can be split out or run alone.
 
     pipx install '/path/to/simpleaprs[mesh]'     # or: pip install '.[mesh]'
     simplemesh --list-ports                      # the serial devices that could be the node
@@ -165,8 +168,9 @@ A node in companion serial mode can't also talk to the phone app, so the page do
 
 It has its own login (`~/.config/simplemesh/auth.json`; `--reset-login` forgets it), its own session cookie, and the same
 rules as the APRS page: plain HTTP for a LAN or VPN, and requests must be addressed to an IP, `localhost`, `*.local` or a
-one-word host name (`--allow-host` adds others). With nothing set it finds the node itself (the first USB serial device),
-takes the map server from simpleaprs's settings, and centres the map on that station. The Pi's own UART pins
+one-word host name (`--allow-host` adds others). With nothing set it finds the node itself (the first USB serial device)
+and uses a N.O.M.A.D. map server at `http://localhost:8080` (`--nomad-url`, or blank for no map; `--home LAT,LON` says
+where the map starts until something on it has a position; `--save` keeps the options). The Pi's own UART pins
 (`/dev/serial0`) are never guessed: pick that port in Settings or give `--serial-port`. Messages and nodes are kept in
 `~/.config/simplemesh/`, so history survives restarts. As a user service:
 

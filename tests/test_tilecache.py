@@ -5,8 +5,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from piwebkit.tilecache import TileCache
 from simpleaprs.mapserver import MapServer
-from simpleaprs.tilecache import TileCache
 
 
 class Origin:

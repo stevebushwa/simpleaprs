@@ -227,7 +227,7 @@ const secConnection = cfg => {
   const accMsg = mk("div", {className: "err"});
   return mk("div", {}, mk("h3", {textContent: "Connection"}),
     fld("Serial port", port, "Where the node is plugged in. The Pi's own UART pins (/dev/serial0) are only listed here, never guessed."),
-    fld("Baud rate", baud), fld("Map server", url, "Project N.O.M.A.D. Blank uses the one simpleaprs on this machine uses."),
+    fld("Baud rate", baud), fld("Map server", url, "Project N.O.M.A.D., e.g. http://localhost:8080. Blank: no map, just the node list."),
     mk("div", {className: "btns"}, saveConn), connMsg,
     mk("h3", {textContent: "Access"}), fld("Current password", cur), fld("New password (8 or more characters)", nw),
     mk("div", {className: "btns"},

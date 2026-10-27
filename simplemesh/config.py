@@ -9,6 +9,7 @@ from pathlib import Path
 DIR = Path.home() / ".config" / "simplemesh"
 PATH = DIR / "config.json"
 AUTH_PATH = DIR / "auth.json"
+TILES_DIR = Path.home() / ".cache" / "simplemesh" / "tiles"
 NODES_PATH = DIR / "nodes.json"
 MESSAGES_PATH = DIR / "messages.json"
 
@@ -18,9 +19,11 @@ class Config:
     serial_port: str = ""    # empty = the first USB serial device found
     baud: int = 115200
     web_port: int = 8074
-    nomad_url: str = ""      # Project N.O.M.A.D. map server; blank = whatever simpleaprs on this machine uses
-    map_cache: bool = True   # the tile cache is shared with simpleaprs, so both work offline on the same tiles
+    nomad_url: str = "http://localhost:8080"  # Project N.O.M.A.D. map server (its usual port); blank = no map
+    map_cache: bool = True   # keep map tiles on disk so they load fast and work when the map server is away
     map_cache_mb: int = 500
+    home_lat: float = 0.0    # where the map starts when nothing on it has a position; 0, 0 = unset
+    home_lon: float = 0.0
 
     @classmethod
     def load(cls) -> "Config":
@@ -37,24 +40,6 @@ class Config:
         tmp.write_text(json.dumps(asdict(self), indent=2))
         os.replace(tmp, PATH)
 
-
-def simpleaprs_settings() -> dict:
-    """What simpleaprs on this machine is set to, if anything: its map server and where the station is."""
-    try:
-        raw = json.loads((Path.home() / ".config" / "simpleaprs" / "config.json").read_text())
-        return raw if isinstance(raw, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def map_server(cfg: Config) -> str:
-    return cfg.nomad_url or str(simpleaprs_settings().get("nomad_url") or "")
-
-
-def home_position() -> tuple[float, float] | None:
-    s = simpleaprs_settings()
-    try:
-        lat, lon = float(s.get("lat", 0)), float(s.get("lon", 0))
-    except (TypeError, ValueError):
-        return None
-    return (lat, lon) if (lat or lon) else None
+    @property
+    def home(self) -> tuple[float, float] | None:
+        return (self.home_lat, self.home_lon) if (self.home_lat or self.home_lon) else None

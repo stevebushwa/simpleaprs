@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from simpleaprs import auth as authmod
-from simpleaprs.auth import Auth
+from piwebkit import auth as authmod
+from piwebkit.auth import Auth
 
 
 @pytest.fixture

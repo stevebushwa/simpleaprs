@@ -1,19 +1,17 @@
-"""The page, as netshare.ShareServer serves it (its `web` argument): the same login, map proxy and event stream as
-simpleaprs's page, with MeshCore's own requests on top. Replies are JSON; a request the node can't do answers 409
-with the reason, which the page shows.
+"""The page, as piwebkit's server serves it (its `web` argument): the login, map proxy and event stream come from
+piwebkit, with MeshCore's own requests on top. Replies are JSON; a request the node can't do answers 409 with the
+reason, which the page shows.
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from urllib.parse import urlparse
 
-from simpleaprs.mapserver import WEB as APRS_WEB
-from simpleaprs.mapserver import MapProxy
-from simpleaprs.netshare import Hub
-from simpleaprs.webui import WebUI
+from piwebkit.hub import Hub
+from piwebkit.maps import MapProxy
+from piwebkit.webbase import BaseWebUI
 
-from .config import Config, home_position, map_server
+from .config import Config
 from .firmware import FirmwareError
 from .node import BANDWIDTHS, PRESETS, MeshError, MeshNode, all_ports, candidate_ports
 
@@ -24,88 +22,52 @@ BAUDS = (9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600)
 UPLOAD_JSON_BYTES = 6 * 1024 * 1024  # a firmware file of up to 4 MiB, as base64 in JSON
 
 
-class MeshWeb(WebUI):
+class MeshWeb(BaseWebUI):
     cookie_name = "simplemesh_session"
+    app_name = "simplemesh"
 
     def __init__(self, hub: Hub, node: MeshNode, proxy: MapProxy, auth, cfg: Config) -> None:
-        super().__init__(hub, None, proxy, True, auth)  # type: ignore[arg-type]  # no APRS tracker here
+        super().__init__(hub, proxy, auth)
         self.node, self.cfg = node, cfg
-        self.posts = {"/api/send": self._send, "/api/advert": self._advert, "/api/profile": self._profile,
-                      "/api/node/add": self._node_add, "/api/node/remove": self._node_remove,
-                      "/api/node/reset-path": self._node_reset, "/api/settings": self._save_settings,
-                      "/api/radio": self._radio, "/api/privacy": self._privacy, "/api/node/reboot": self._reboot,
-                      "/api/stats": lambda d: self.node.stats(),
-                      "/api/channel/set": self._channel_set, "/api/channel/remove": self._channel_remove,
-                      "/api/identity/export": lambda d: {"key": self.node.export_key()},
-                      "/api/identity/import": lambda d: self.node.import_key(str(d["key"])),
-                      "/api/contact/export": self._contact_export, "/api/contact/import": self._contact_import,
-                      "/api/contact/share": lambda d: self.node.share_contact(self._key(d)),
-                      "/api/admin/state": lambda d: self.node.remote.state(self._key(d)),
-                      "/api/admin/login": lambda d: self.node.remote.login(self._key(d), str(d.get("password", ""))),
-                      "/api/admin/logout": lambda d: self.node.remote.logout(self._key(d)),
-                      "/api/admin/status": lambda d: {"status": self.node.remote.status(self._key(d))},
-                      "/api/admin/neighbours": lambda d: {"neighbours": self.node.remote.neighbours(self._key(d))},
-                      "/api/admin/telemetry": lambda d: {"telemetry": self.node.remote.telemetry(self._key(d))},
-                      "/api/admin/acl": lambda d: {"acl": self.node.remote.acl(self._key(d))},
-                      "/api/admin/route": lambda d: {"route": self.node.remote.route(self._key(d))},
-                      "/api/admin/command": lambda d: {"reply": self.node.remote.command(self._key(d), str(d.get("text", "")))},
-                      "/api/firmware/check": lambda d: {"release": self.node.firmware.check()},
-                      "/api/firmware/flash": self._flash, "/api/firmware/upload": self._flash_upload}
-        self.limits = {"/api/firmware/upload": UPLOAD_JSON_BYTES}
+        routes = {"/api/send": self._send, "/api/advert": self._advert, "/api/profile": self._profile,
+                  "/api/node/add": self._node_add, "/api/node/remove": self._node_remove,
+                  "/api/node/reset-path": self._node_reset, "/api/settings": self._save_settings,
+                  "/api/radio": self._radio, "/api/privacy": self._privacy, "/api/node/reboot": self._reboot,
+                  "/api/stats": lambda d: self.node.stats(),
+                  "/api/channel/set": self._channel_set, "/api/channel/remove": self._channel_remove,
+                  "/api/identity/export": lambda d: {"key": self.node.export_key()},
+                  "/api/identity/import": lambda d: self.node.import_key(str(d["key"])),
+                  "/api/contact/export": self._contact_export, "/api/contact/import": self._contact_import,
+                  "/api/contact/share": lambda d: self.node.share_contact(self._key(d)),
+                  "/api/admin/state": lambda d: self.node.remote.state(self._key(d)),
+                  "/api/admin/login": lambda d: self.node.remote.login(self._key(d), str(d.get("password", ""))),
+                  "/api/admin/logout": lambda d: self.node.remote.logout(self._key(d)),
+                  "/api/admin/status": lambda d: {"status": self.node.remote.status(self._key(d))},
+                  "/api/admin/neighbours": lambda d: {"neighbours": self.node.remote.neighbours(self._key(d))},
+                  "/api/admin/telemetry": lambda d: {"telemetry": self.node.remote.telemetry(self._key(d))},
+                  "/api/admin/acl": lambda d: {"acl": self.node.remote.acl(self._key(d))},
+                  "/api/admin/route": lambda d: {"route": self.node.remote.route(self._key(d))},
+                  "/api/admin/command": lambda d: {"reply": self.node.remote.command(self._key(d), str(d.get("text", "")))},
+                  "/api/firmware/check": lambda d: {"release": self.node.firmware.check()},
+                  "/api/firmware/flash": self._flash, "/api/firmware/upload": self._flash_upload}
+        limits = {"/api/firmware/upload": UPLOAD_JSON_BYTES}
+        self.private_posts = {path: self.json_route(fn, limits.get(path, 4096), (MeshError, FirmwareError))
+                              for path, fn in routes.items()}
 
     def intro(self) -> list[dict]:
         return self.node.intro()
 
-    # --- GET ----------------------------------------------------------------------------------------
-
-    def handle(self, h) -> bool:
-        path = urlparse(h.path).path
-        if path == "/login":
-            self.proxy._send(h, 200, (APRS_WEB / "login.html").read_bytes().replace(b"simpleaprs", b"simplemesh"), "text/html")
-        elif path == "/api/auth/state":
-            h._reply(200, {"setup": not self.auth.configured, "logged_in": self.session_ok(h)})
-        elif not self.session_ok(h):
-            if path == "/" or path.endswith(".html"):
-                h.send_response(302)
-                h.send_header("Location", "/login")
-                h.send_header("Content-Length", "0")
-                h.end_headers()
-            else:
-                h._reply(401, {"error": "login required"})
-        elif path == "/api/settings":
-            h._reply(200, self.settings_view())
-        elif path == "/api/account":
-            h._reply(200, {"username": self.auth.username})
-        else:
-            return self.proxy.handle(h, f"http://{h.headers.get('Host', '')}", index="index.html")
+    def get(self, h, path: str) -> bool:
+        if path != "/api/settings":
+            return False
+        h.reply(200, self.settings_view())
         return True
 
     def settings_view(self) -> dict:
-        home = home_position()
+        home = self.cfg.home
         return {"values": {"serial_port": self.cfg.serial_port, "baud": self.cfg.baud, "nomad_url": self.cfg.nomad_url},
                 "ports": all_ports(), "detected": candidate_ports(), "bauds": BAUDS, "map_server": self.proxy.nomad,
                 "home": list(home) if home else None, "presets": PRESETS, "bandwidths": BANDWIDTHS}
-
-    # --- POST ---------------------------------------------------------------------------------------
-
-    def handle_post(self, h) -> bool:
-        fn = self.posts.get(h.path)
-        if not fn:
-            if h.path == "/api/forget-inactive":  # simpleaprs's, which needs its tracker
-                return False
-            return super().handle_post(h)  # the login, logout and password endpoints
-        if not self.session_ok(h):
-            h._reply(401, {"error": "login required"})
-            return True
-        d = h.read_json(self.limits.get(h.path, 4096))
-        if isinstance(d, dict):
-            try:
-                h._reply(200, fn(d) or {"ok": True})
-            except (MeshError, FirmwareError) as e:
-                h._reply(409, {"error": str(e)})
-            except (KeyError, TypeError, ValueError):
-                h._reply(400, {"error": "bad request"})
-        return True
 
     @staticmethod
     def _key(d: dict, pattern: re.Pattern = KEY, name: str = "key") -> str:
@@ -175,6 +137,6 @@ class MeshWeb(WebUI):
         moved = (port, baud) != (self.cfg.serial_port, self.cfg.baud)
         self.cfg.serial_port, self.cfg.baud, self.cfg.nomad_url = port, baud, url
         self.cfg.save()
-        self.proxy.nomad = map_server(self.cfg).rstrip("/")
+        self.proxy.nomad = url.rstrip("/")
         if moved:
             self.node.reconnect()

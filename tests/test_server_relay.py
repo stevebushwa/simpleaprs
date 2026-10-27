@@ -2,7 +2,7 @@ import time
 from pathlib import Path
 
 from simpleaprs import aprs
-from simpleaprs.auth import Auth
+from piwebkit.auth import Auth
 from simpleaprs.ax25 import Frame
 from simpleaprs.config import Config
 from simpleaprs.digipeater import Digipeater

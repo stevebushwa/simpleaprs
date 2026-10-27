@@ -81,7 +81,8 @@ def headless(args: argparse.Namespace) -> int:
     if args.symbol is not None and len(cfg.symbol) != 2:
         sys.exit("--symbol is two characters: the table (/ or \\) then the code, like /-.")
     if args.reset_login:
-        from .auth import Auth
+        from piwebkit.auth import Auth
+
         from .config import AUTH_PATH
         Auth(AUTH_PATH).reset()
         print("The web page's login has been forgotten. Open the page to create a new one.")
@@ -108,12 +109,15 @@ def selftest() -> int:
     """Used by the build to check a packaged app: the Qt parts and the web files it needs are all in there."""
     from pathlib import Path
 
+    from piwebkit.maps import WEB as SHARED_WEB
+
     from . import app  # noqa: F401  (imports Qt, Qt WebEngine and Qt Multimedia)
     from .mapserver import WEB
-    for name in ("app.html", "login.html", "map.js", "maplibre-gl.js", "pmtiles.js"):
-        if not (WEB / name).is_file():
-            print(f"missing {Path(WEB / name)}", file=sys.stderr)
-            return 1
+    for root, names in ((WEB, ("app.html", "map.js")), (SHARED_WEB, ("login.html", "maplibre-gl.js", "pmtiles.js"))):
+        for name in names:
+            if not (root / name).is_file():
+                print(f"missing {Path(root / name)}", file=sys.stderr)
+                return 1
     print("simpleaprs selftest ok")
     return 0
 

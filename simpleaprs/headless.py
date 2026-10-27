@@ -15,14 +15,15 @@ import time
 from . import aprs, rxdiag
 from .ax25 import Frame
 from . import webconfig
-from .auth import Auth
+from piwebkit.auth import Auth
+from piwebkit.hub import Hub
+from piwebkit.server import lan_ip
 from .config import AUTH_PATH, PATH, STATIONS_PATH, Config
 from .digipeater import Digipeater
 from .igate import IGate, passcode
-from .mapserver import MapProxy
-from .netshare import Hub, ShareServer, lan_ip
+from .mapserver import MapProxy, tile_cache
+from .netshare import ShareServer
 from .soundio import SoundRadio, device_names, find_device
-from .tilecache import TileCache
 from .tracker import Tracker
 from .webui import WebUI
 
@@ -159,7 +160,7 @@ class Server:
     def start(self) -> bool:
         c = self.cfg
         self.tracker.load()
-        cache = TileCache(max_bytes=c.map_cache_mb * 1024 * 1024) if c.map_cache else None
+        cache = tile_cache(c.map_cache_mb) if c.map_cache else None
         self.web = WebUI(self.web_hub, self.tracker, MapProxy(c.nomad_url, cache), c.share_allow_tx, self.auth, self)
         try:  # desktop apps follow with the access token; the web page has its login
             self.share = ShareServer(self.hub, c.share_port, self.auth.api_token, True, c.share_allow_tx, self._hello, self.remote_tx,
@@ -273,7 +274,7 @@ class Server:
             if not c.map_cache:
                 p.cache = None
             elif p.cache is None:
-                p.cache = TileCache(max_bytes=c.map_cache_mb * 1024 * 1024)
+                p.cache = tile_cache(c.map_cache_mb)
             else:
                 p.cache.max_bytes = c.map_cache_mb * 1024 * 1024
                 p.cache.trim()

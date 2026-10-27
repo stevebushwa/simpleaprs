@@ -2,7 +2,7 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>simpleaprs - log in</title>
+<title>__APP__ - log in</title>
 <style>
   :root { --bg: #f3f3f5; --card: #fff; --fg: #1d1d1f; --dim: #6b6b70; --line: #d8d8dc; --accent: #3367d6; --err: #c33; }
   @media (prefers-color-scheme: dark) {
@@ -23,7 +23,7 @@
   [hidden] { display: none; }
 </style>
 <form id="f" autocomplete="on">
-  <h1 id="title">simpleaprs</h1>
+  <h1 id="title">__APP__</h1>
   <p id="sub">&nbsp;</p>
   <label class="t" for="u">Username</label>
   <input id="u" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
@@ -44,7 +44,7 @@
     if (s.logged_in) return location.replace("/");
     setup = s.setup;
     $("title").textContent = setup ? "Create your login" : "Log in";
-    $("sub").textContent = setup ? "This is the first visit to this server. Choose the login it will ask for from now on." : "simpleaprs";
+    $("sub").textContent = setup ? "This is the first visit to this server. Choose the login it will ask for from now on." : "__APP__";
     $("again").hidden = !setup;
     $("p2").required = setup;
     $("p").autocomplete = setup ? "new-password" : "current-password";
