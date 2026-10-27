@@ -1,0 +1,131 @@
+"""Command line entry point: the MeshCore web page for a node on a serial port."""
+from __future__ import annotations
+
+import argparse
+import signal
+import sys
+import tempfile
+import threading
+from pathlib import Path
+
+EPILOG = """\
+Serves a web page for a MeshCore companion node plugged into this machine over USB serial: nodes on a map (from
+Project N.O.M.A.D., so it works offline), channels, direct messages, the radio's packet log, and the node's
+radio, channel and firmware settings, plus logging in to repeaters and room servers. The first visit creates your login. Everything else is on the page's Settings tab. Keep it on a LAN or VPN: it is plain HTTP.
+Options apply to this run only, unless --save is given.
+"""
+
+
+def parse(argv: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(prog="simplemesh", description="A web page for a MeshCore node.", epilog=EPILOG,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--serial-port", metavar="DEV", help="the node's serial device, e.g. /dev/ttyACM0 (default: find it)")
+    ap.add_argument("--baud", type=int, help="serial speed, default 115200")
+    ap.add_argument("--port", type=int, help="web port to serve on, default 8074")
+    ap.add_argument("--nomad-url", metavar="URL", help="Project N.O.M.A.D. map server (default: the one simpleaprs uses)")
+    ap.add_argument("--save", action="store_true", help="keep the options above as the saved settings")
+    ap.add_argument("--reset-login", action="store_true", help="forget the web page's login: the next visitor creates a new one")
+    ap.add_argument("--list-ports", action="store_true", help="print the serial devices that could be the node, and exit")
+    ap.add_argument("--demo", action="store_true", help="no radio: a made-up mesh, to look at the page (nothing is saved)")
+    ap.add_argument("--demo-at", metavar="LAT,LON", help="(with --demo) where the made-up mesh is (default: where simpleaprs is set)")
+    ap.add_argument("--allow-host", action="append", default=[], metavar="NAME",
+                    help="also accept requests addressed to this host name (the server refuses names that don't look like "
+                         "a LAN machine); can be repeated")
+    return ap.parse_args(argv)
+
+
+def run(cfg, demo: bool, allowed: tuple[str, ...], demo_at: tuple[float, float] | None = None) -> int:
+    from simpleaprs.auth import Auth
+    from simpleaprs.mapserver import WEB as APRS_WEB
+    from simpleaprs.mapserver import MapProxy
+    from simpleaprs.netshare import Hub, ShareServer, lan_ip, new_token
+    from simpleaprs.tilecache import TileCache
+
+    from . import config
+    from .node import MeshNode, candidate_ports
+    from .store import Store
+    from .webui import WEB, MeshWeb
+
+    if demo:
+        scratch = Path(tempfile.mkdtemp(prefix="simplemesh-demo-"))
+        store = Store(scratch / "nodes.json", scratch / "messages.json")
+        auth = Auth(scratch / "auth.json")
+    else:
+        store = Store(config.NODES_PATH, config.MESSAGES_PATH)
+        auth = Auth(config.AUTH_PATH)
+    hub = Hub()
+    connector, fetch, flasher = None, None, None
+    if demo:
+        from .demo import DemoMesh, demo_fetch, demo_flasher
+        lat, lon = demo_at or config.home_position() or (39.50, -98.35)
+        fetch, flasher = demo_fetch, demo_flasher
+
+        async def connector(port, baud):
+            return DemoMesh(lat, lon)
+    node = MeshNode(cfg, hub, store, connector=connector, ports=(lambda: ["demo"]) if demo else candidate_ports,
+                    fetch=fetch, flasher=flasher)
+    cache = TileCache(max_bytes=cfg.map_cache_mb * 1024 * 1024) if cfg.map_cache else None
+    proxy = MapProxy(config.map_server(cfg).rstrip("/"), cache, web=(WEB, APRS_WEB))
+    web = MeshWeb(hub, node, proxy, auth, cfg)
+    try:
+        server = ShareServer(Hub(), cfg.web_port, new_token(), True, False, lambda: {}, lambda req: None, web=web,
+                             allowed_hosts=allowed)
+    except OSError as e:
+        print(f"Can't serve on port {cfg.web_port}: {e}", file=sys.stderr)
+        return 1
+    node.start()
+    print(f"simplemesh{' (demo)' if demo else ''}: http://{lan_ip()}:{server.port}/", flush=True)
+    print("Map server: " + (proxy.nomad or "none set (nodes are listed but there is no map)"), flush=True)
+    if not auth.configured:
+        print("No login yet: the first person to open the page creates it.", flush=True)
+    stop = threading.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())
+    while not stop.wait(1):
+        pass
+    server.stop()
+    node.stop()
+    return 0
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse(argv)
+    if not sys.platform.startswith("linux"):
+        sys.exit("simplemesh serves a node on a serial port of a Linux machine, such as a Raspberry Pi.")
+    try:
+        import meshcore  # noqa: F401
+    except ImportError:
+        sys.exit("simplemesh needs the meshcore library:  pip install 'simpleaprs[mesh]'")
+    from .config import AUTH_PATH, PATH, Config
+    from .node import all_ports, candidate_ports
+
+    if args.list_ports:
+        found = candidate_ports()
+        print("\n".join(found) if found else "No USB serial devices found.")
+        extra = [p for p in all_ports() if p not in found]
+        if extra:
+            print("Also present (the Pi's own UART; choose one in Settings or with --serial-port):\n  " + "\n  ".join(extra))
+        return
+    cfg = Config.load()
+    for opt, field in (("serial_port", "serial_port"), ("baud", "baud"), ("port", "web_port"), ("nomad_url", "nomad_url")):
+        if getattr(args, opt) is not None:
+            setattr(cfg, field, getattr(args, opt))
+    if args.reset_login:
+        from simpleaprs.auth import Auth
+        Auth(AUTH_PATH).reset()
+        print("The web page's login has been forgotten. Open the page to create a new one.")
+    if args.save:
+        cfg.save()
+        print(f"Saved to {PATH}")
+    demo_at = None
+    if args.demo_at:
+        try:
+            demo_at = tuple(float(v) for v in args.demo_at.split(","))
+            assert len(demo_at) == 2
+        except (ValueError, AssertionError):
+            sys.exit("--demo-at takes a latitude and longitude, like 29.2,-98.7")
+    sys.exit(run(cfg, args.demo, tuple(args.allow_host), demo_at))
+
+
+if __name__ == "__main__":
+    main()

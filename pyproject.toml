@@ -8,18 +8,21 @@ dependencies = ["numpy"]
 [project.optional-dependencies]
 gui = ["PySide6"]           # the desktop app
 server = ["sounddevice; sys_platform == 'linux'"]    # the terminal server (--headless, Linux only); also needs the PortAudio library, e.g. apt install libportaudio2
+mesh = ["meshcore", "esptool"]  # simplemesh, the MeshCore web page (esptool: its firmware updater)
 all = ["PySide6", "sounddevice; sys_platform == 'linux'"]
-dev = ["pytest"]
+dev = ["pytest", "meshcore"]   # meshcore: the simplemesh tests drive its event types
 
 [project.scripts]
 simpleaprs = "simpleaprs.cli:main"
+simplemesh = "simplemesh.cli:main"
 
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["simpleaprs"]
+packages = ["simpleaprs", "simplemesh"]
 
 [tool.setuptools.package-data]
 simpleaprs = ["web/*", "sounds/*"]
+simplemesh = ["web/*"]

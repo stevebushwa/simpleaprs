@@ -129,3 +129,52 @@ To start it at boot, run it as a user service (it needs no setup first, and the 
     WantedBy=default.target
 
     systemctl --user enable --now simpleaprs && loginctl enable-linger $USER
+
+## simplemesh: a web page for a MeshCore node
+
+`simplemesh` is the same idea for [MeshCore](https://meshcore.co.uk): a Pi with a **companion node plugged into its USB
+serial port** serves a web page you open from any browser on the network. It lives in this repo because it reuses the
+login, the web server and the N.O.M.A.D. map proxy (and its tile cache, so both pages work offline on the same tiles).
+
+    pipx install '/path/to/simpleaprs[mesh]'     # or: pip install '.[mesh]'
+    simplemesh --list-ports                      # the serial devices that could be the node
+    simplemesh                                   # http://raspberrypi.local:8074/
+    simplemesh --demo                            # no radio: a made-up mesh, to look at the page
+
+The node must run the **companion (USB serial)** firmware. The page has: a map of every node that has shared a position
+(companions, repeaters, room servers and sensors each with their own badge; click one for details and the route its
+messages take, resolved from the repeaters' hashes), **Channels** and **Direct** chat (with unread counts and delivery
+status: direct messages are retried and show "delivered" once acknowledged), a **Nodes** list, a live **Packets** log of
+everything the radio hears (adverts, channel traffic, hops, SNR/RSSI), and **Settings**. Nodes the radio heard but your
+node hasn't saved are shown dashed with an **Add** button; the node's contact list and channels stay on the node.
+
+A node in companion serial mode can't also talk to the phone app, so the page does what the app does:
+
+- **Settings > Node**: name and position, advertising, who may ask for your telemetry and position, ask-before-adding,
+  contact links (export yours, import a friend's), statistics, restart, and back up / restore the node's key.
+- **Settings > Radio**: frequency, bandwidth, spreading factor, coding rate and power, with regional presets. It warns
+  when a node in North America is set to a European frequency.
+- **Settings > Channels**: add (public `#name` or private with a secret), edit, share and remove channels.
+- **Settings > Firmware**: update an **ESP32** node (Heltec, LilyGO, XIAO ESP32...) to the newest MeshCore companion USB
+  release from GitHub, or from a `-merged.bin` file you pick when the machine has no internet. The page lets go of the
+  serial port, runs esptool, and picks the node up again; it works even when the node's firmware isn't answering. nRF52
+  boards (RAK4631, T114...) use a different bootloader and aren't handled.
+- **Repeaters, room servers and sensors** (click one on the map, then Manage): log in, status, neighbours, telemetry,
+  access list, a command line, and room chat. Everything goes over the radio, so it takes seconds and fails out of range.
+  Passwords are passed through, never stored.
+
+It has its own login (`~/.config/simplemesh/auth.json`; `--reset-login` forgets it), its own session cookie, and the same
+rules as the APRS page: plain HTTP for a LAN or VPN, and requests must be addressed to an IP, `localhost`, `*.local` or a
+one-word host name (`--allow-host` adds others). With nothing set it finds the node itself (the first USB serial device),
+takes the map server from simpleaprs's settings, and centres the map on that station. The Pi's own UART pins
+(`/dev/serial0`) are never guessed: pick that port in Settings or give `--serial-port`. Messages and nodes are kept in
+`~/.config/simplemesh/`, so history survives restarts. As a user service:
+
+    # ~/.config/systemd/user/simplemesh.service
+    [Service]
+    ExecStart=/path/to/simplemesh
+    Restart=on-failure
+    [Install]
+    WantedBy=default.target
+
+The user needs to be in the `dialout` group to open the serial port.

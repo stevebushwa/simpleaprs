@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>simplemesh</title>
+<link rel="stylesheet" href="maplibre-gl.css">
+<style>
+  :root { --bg: #fff; --fg: #1d1d1f; --dim: #6b6b70; --line: #d8d8dc; --bar: #f3f3f5; --accent: #3367d6; --ok: #2a9d4a; --bad: #c33;
+          --bubble: #eceef2; --mine: #3367d6; --t1: #1e6fe8; --t2: #e08a00; --t3: #8a3ffc; --t4: #1f9d3a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1b1e; --fg: #e8e8ea; --dim: #9a9aa0; --line: #38383d; --bar: #26262a; --accent: #7aa2ff; --ok: #4ade80; --bad: #f87171;
+            --bubble: #2c2c31; --mine: #3a5fb8; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
+  body { display: grid; grid-template-rows: auto 1fr; }
+  [hidden] { display: none !important; }
+  header { padding: 4px 12px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  header .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 30px; }
+  header h1 { margin: 0; font-size: 15px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); flex: none; }
+  .dot.on { background: var(--ok); }
+  #status, #radio { color: var(--dim); font-size: 13px; }
+  .grow { flex: 1; }
+  #notice { background: #fff3cd; color: #5b4500; padding: 5px 12px; font-size: 13px; }
+  main { display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
+  #mapbox { position: relative; min-height: 0; }
+  #map { position: absolute; inset: 0; }
+  #msg { position: absolute; left: 8px; bottom: 36px; font: 12px sans-serif; color: #1d1d1f; background: #fffd; padding: 3px 6px; border-radius: 4px; }
+  #nomap { position: absolute; inset: 0; display: none; place-items: center; color: var(--dim); padding: 20px; text-align: center; }
+  aside { display: flex; flex-direction: column; border-left: 1px solid var(--line); min-height: 0; }
+  nav { display: flex; border-bottom: 1px solid var(--line); }
+  nav button { flex: 1; border: 0; background: none; color: var(--dim); padding: 9px 2px; font: inherit; cursor: pointer; border-bottom: 2px solid transparent; position: relative; }
+  nav button.on { color: var(--fg); border-bottom-color: var(--accent); }
+  .badge { background: var(--accent); color: #fff; border-radius: 9px; font-size: 11px; padding: 0 6px; margin-left: 4px; }
+  .tab { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+  .tab.pad { padding: 10px 12px; display: block; }
+  table { width: 100%; border-collapse: collapse; }
+  th { position: sticky; top: 0; background: var(--bar); text-align: left; font-weight: 600; color: var(--dim); z-index: 1; }
+  th, td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--bar); }
+  tr.old { color: var(--dim); }
+  td:nth-child(n+2) { white-space: nowrap; }
+  .chip { display: inline-block; padding: 0 7px; border-radius: 9px; font-size: 11px; color: #fff; background: var(--c, #777); vertical-align: 1px; }
+  .chip.t1 { --c: var(--t1); } .chip.t2 { --c: var(--t2); } .chip.t3 { --c: var(--t3); } .chip.t4 { --c: var(--t4); }
+  .tools { display: flex; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
+  .tools input[type=search] { flex: 1; min-width: 100px; }
+  input, select, button.act, textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; }
+  button.act { cursor: pointer; background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.act:disabled, input:disabled { opacity: .5; cursor: default; }
+  button.ghost { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; cursor: pointer; }
+  button.small { padding: 1px 8px; font-size: 12px; }
+  button.danger { color: var(--bad); }
+  .pills { display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .pills button { border: 1px solid var(--line); background: none; color: var(--dim); border-radius: 14px; padding: 3px 11px; font: inherit; cursor: pointer; }
+  .pills button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .thread { flex: 1; overflow: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .b { max-width: 86%; background: var(--bubble); border-radius: 12px 12px 12px 3px; padding: 5px 10px; align-self: flex-start; word-break: break-word; }
+  .b.out { align-self: flex-end; background: var(--mine); color: #fff; border-radius: 12px 12px 3px 12px; }
+  .b .who { font-size: 12px; font-weight: 600; color: var(--accent); }
+  .b .meta { font-size: 11px; color: var(--dim); margin-top: 1px; }
+  .b.out .meta { color: #ffffffb0; }
+  .b.failed .meta { color: #ffb4a8; }
+  .empty { color: var(--dim); padding: 24px 16px; text-align: center; margin: auto; }
+  form.compose { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); align-items: center; }
+  form.compose input { flex: 1; min-width: 0; }
+  .count { font-size: 11px; color: var(--dim); min-width: 28px; text-align: right; }
+  .count.over { color: var(--bad); }
+  .log { flex: 1; overflow: auto; padding: 4px 10px; font: 12px ui-monospace, monospace; }
+  .log div { padding: 2px 0; word-break: break-word; }
+  .log .t, .log .dim { color: var(--dim); }
+  .log .t { margin-right: 6px; }
+  .kind { display: inline-block; min-width: 62px; font-weight: 600; }
+  .kind.ADVERT { color: var(--t2); } .kind.GRP_TXT { color: var(--t1); } .kind.TXT_MSG { color: var(--t3); } .kind.ACK { color: var(--t4); }
+  h3 { margin: 18px 0 8px; font-size: 14px; } h3:first-child { margin-top: 0; }
+  .fld { margin: 0 0 12px; }
+  .fld > label.t { display: block; margin-bottom: 3px; font-weight: 600; }
+  .fld input, .fld select { width: 100%; }
+  .fld .row { display: flex; gap: 6px; align-items: center; }
+  .hint { color: var(--dim); font-size: 12px; margin-top: 3px; }
+  .err { color: var(--bad); font-size: 12px; margin-top: 3px; }
+  .ok { color: var(--ok); font-size: 12px; }
+  dl.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0 0 8px; }
+  dl.kv dt { color: var(--dim); } dl.kv dd { margin: 0; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* map markers and popups */
+  .mk { display: flex; flex-direction: column; align-items: center; cursor: pointer; --c: #777; }
+  .mk.t1 { --c: var(--t1); } .mk.t2 { --c: var(--t2); } .mk.t3 { --c: var(--t3); } .mk.t4 { --c: var(--t4); } .mk.me { --c: #111; cursor: default; }
+  .mk .ic { width: 26px; height: 26px; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-shadow: 0 0 3px #000; display: flex; align-items: center; justify-content: center; }
+  .mk .ic svg { width: 16px; height: 16px; }
+  .mk.me .ic { box-shadow: 0 0 0 4px #ffd54a, 0 0 4px #000; }
+  .mk.unsaved .ic { border-style: dashed; opacity: .8; }
+  .mk.old { opacity: .55; filter: grayscale(1); }
+  .mk b { font: 11px sans-serif; color: #1d1d1f; background: #fffd; padding: 0 3px; border-radius: 3px; margin-top: 2px; white-space: nowrap; }
+  .maplibregl-popup-content { font: 12px sans-serif; color: #1d1d1f; background: #fff; max-width: 290px; }
+  .maplibregl-popup-content h4 { margin: 0 0 4px; font-size: 14px; }
+  .maplibregl-popup-content dl { margin: 0 0 6px; display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; }
+  .maplibregl-popup-content dt { color: #666; } .maplibregl-popup-content dd { margin: 0; word-break: break-word; }
+  .maplibregl-popup-content button { margin: 2px 4px 0 0; font: inherit; padding: 3px 10px; border: 0; border-radius: 4px; background: #3367d6; color: #fff; cursor: pointer; }
+  .maplibregl-popup-content button.plain { background: #666; }
+  #legend { position: absolute; top: 8px; left: 8px; z-index: 2; font: 12px sans-serif; background: #fffe; color: #222; padding: 4px 8px; border-radius: 4px; box-shadow: 0 0 3px #0006; }
+  #legend summary { cursor: pointer; font-weight: 600; }
+  #legend div { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+  #legend i { flex: none; width: 14px; height: 14px; display: inline-block; }
+  #legend i.dot { border-radius: 50%; background: var(--c); border: 2px solid #fff; box-shadow: 0 0 2px #000; }
+  #legend i.dot.old { opacity: .55; filter: grayscale(1); } #legend i.dot.unsaved { border-style: dashed; }
+  #legend i.line { height: 0; border-top: 3px solid var(--c); } #legend i.dashed { border-top-style: dashed; }
+  .pills.sub { padding: 0 0 8px; border-bottom: 0; }
+  .chrow { display: flex; gap: 6px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .chidx { color: var(--dim); min-width: 18px; text-align: right; }
+  .warn { background: #fff3cd; color: #5b4500; padding: 6px 8px; border-radius: 5px; font-size: 12px; margin: 0 0 12px; }
+  .bar { height: 10px; background: var(--bar); border: 1px solid var(--line); border-radius: 5px; overflow: hidden; margin: 6px 0; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .console { font: 12px ui-monospace, monospace; background: var(--bar); border-radius: 5px; padding: 6px 8px; margin: 0; height: 150px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  details .console { height: auto; max-height: 160px; }
+  .console .cmdline { color: var(--accent); } .console .bad { color: var(--bad); }
+  .adminout { min-height: 24px; margin: 6px 0 4px; }
+  .fld input[type=checkbox] { width: auto; margin-right: 4px; }
+  dialog { color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 0; width: min(560px, 94vw); max-height: 88vh; }
+  dialog::backdrop { background: #0007; }
+  dialog .dhead { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  dialog .dbody { padding: 10px 14px 14px; overflow: auto; max-height: calc(88vh - 48px); }
+  dialog textarea { width: 100%; font: 12px ui-monospace, monospace; }
+  dialog .row, .tab .row { display: flex; gap: 6px; align-items: center; }
+  dialog .row input[type=password], dialog .row input[type=text] { flex: 1; min-width: 0; }
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 42% 1fr; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+<header>
+  <div class="row">
+    <span class="dot" id="conn"></span><h1 id="title">simplemesh</h1>
+    <span id="status">Connecting...</span>
+    <span class="grow"></span>
+    <label>Show <select id="filter">
+      <option value="all">All nodes</option><option value="1">Companions</option><option value="2">Repeaters</option>
+      <option value="3">Room servers</option><option value="4">Sensors</option><option value="saved">Saved only</option></select></label>
+    <button class="act" id="advert" disabled title="Announce this node to the nodes that can hear it directly">Advertise</button>
+    <button class="ghost" id="logout">Log out</button>
+  </div>
+  <div class="row"><span id="radio"></span><span class="grow"></span><span id="battery"></span></div>
+</header>
+<div id="notice" hidden></div>
+<main>
+  <div id="mapbox"><div id="map"></div><div id="msg"></div><div id="nomap">The map needs WebGL, which this browser isn't providing. Everything else still works.</div></div>
+  <aside>
+    <nav>
+      <button data-tab="channels" class="on">Channels<span class="badge" id="b-channels" hidden></span></button>
+      <button data-tab="direct">Direct<span class="badge" id="b-direct" hidden></span></button>
+      <button data-tab="nodes">Nodes</button>
+      <button data-tab="packets">Packets</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+    <div class="tab" id="channels">
+      <div class="pills" id="chan-pills"></div>
+      <div class="thread" id="chan-thread"></div>
+      <form class="compose" id="chan-form"><input id="chan-text" placeholder="Message the channel" autocomplete="off"><span class="count" id="chan-count"></span><button class="act" disabled>Send</button></form>
+    </div>
+    <div class="tab" id="direct" hidden>
+      <div class="pills" id="dm-pills"></div>
+      <div class="thread" id="dm-thread"></div>
+      <form class="compose" id="dm-form"><input id="dm-text" placeholder="Direct message" autocomplete="off"><span class="count" id="dm-count"></span><button class="act" disabled>Send</button></form>
+    </div>
+    <div class="tab" id="nodes" hidden>
+      <div class="tools"><input id="search" type="search" placeholder="Find a node" autocomplete="off"><span id="nodecount" class="hint"></span></div>
+      <table><thead><tr><th>Node</th><th>Heard</th><th>Route</th><th>SNR</th></tr></thead><tbody id="rows"></tbody></table>
+    </div>
+    <div class="tab" id="packets" hidden>
+      <div class="tools"><label><input type="checkbox" id="hide-adverts"> Hide adverts</label><span class="grow"></span><span class="hint" id="rxcount"></span></div>
+      <div class="log" id="pkts"></div>
+    </div>
+    <div class="tab pad" id="settings" hidden></div>
+  </aside>
+</main>
+<script src="maplibre-gl.js"></script>
+<script src="pmtiles.js"></script>
+<dialog id="info">
+  <div class="dhead"><b id="info-title"></b><span class="grow"></span><button class="ghost" id="info-close">Close</button></div>
+  <div class="dbody"><textarea id="info-text" readonly rows="5" spellcheck="false"></textarea>
+    <div class="btns"><button class="act" id="info-copy">Copy</button></div><div class="hint" id="info-note"></div></div>
+</dialog>
+<dialog id="admin">
+  <div class="dhead"><b id="admin-title"></b><span class="grow"></span><button class="ghost" id="admin-close">Close</button></div>
+  <div class="dbody" id="admin-body"></div>
+</dialog>
+<script src="meshmap.js"></script>
+<script src="mesh.js"></script>
+<script src="manage.js"></script>
