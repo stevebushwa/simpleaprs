@@ -18,6 +18,8 @@ COOKIE = "simpleaprs_session"
 
 
 class WebUI:
+    cookie_name = COOKIE  # another server on the same address (simplemesh) needs its own, or each login would end the other's
+
     def __init__(self, hub: Hub, tracker: Tracker, proxy: MapProxy, allow_tx: bool,
                  auth: Auth | None = None, app=None) -> None:
         self.hub, self.tracker, self.proxy, self.allow_tx = hub, tracker, proxy, allow_tx
@@ -28,7 +30,7 @@ class WebUI:
         return self.auth is not None
 
     def session_ok(self, h) -> bool:
-        return self.auth is None or self.auth.valid(h.cookie(COOKIE))
+        return self.auth is None or self.auth.valid(h.cookie(self.cookie_name))
 
     def intro(self) -> list[dict]:
         return self.tracker.intro(self.allow_tx) + ([self.app.status_event()] if self.app else [])
@@ -96,7 +98,7 @@ class WebUI:
 
     def _start(self, h, remember: bool) -> None:
         token, max_age = self.auth.start_session(remember)
-        cookie = f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict" + (f"; Max-Age={max_age}" if max_age else "")
+        cookie = f"{self.cookie_name}={token}; Path=/; HttpOnly; SameSite=Strict" + (f"; Max-Age={max_age}" if max_age else "")
         h._reply(200, {"ok": True}, headers=(("Set-Cookie", cookie),))
 
     def _setup(self, h) -> None:
@@ -124,18 +126,18 @@ class WebUI:
                                         else "Wrong username or password."})
 
     def _logout(self, h) -> None:
-        self.auth.end(h.cookie(COOKIE))
-        h._reply(200, {"ok": True}, headers=(("Set-Cookie", f"{COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),))
+        self.auth.end(h.cookie(self.cookie_name))
+        h._reply(200, {"ok": True}, headers=(("Set-Cookie", f"{self.cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),))
 
     def _logout_all(self, h) -> None:
         self.auth.end_all()
-        h._reply(200, {"ok": True}, headers=(("Set-Cookie", f"{COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),))
+        h._reply(200, {"ok": True}, headers=(("Set-Cookie", f"{self.cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),))
 
     def _password(self, h) -> None:
         d = h.read_json()
         if not isinstance(d, dict):
             return
-        problem = self.auth.change_password(str(d.get("current", "")), str(d.get("new", "")), keep=h.cookie(COOKIE))
+        problem = self.auth.change_password(str(d.get("current", "")), str(d.get("new", "")), keep=h.cookie(self.cookie_name))
         h._reply(400 if problem else 200, {"error": problem} if problem else {"ok": True})
 
     def _new_token(self, h) -> None:

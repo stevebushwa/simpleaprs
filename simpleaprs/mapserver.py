@@ -22,9 +22,17 @@ PASS_HEADERS = ("Content-Type", "Content-Length", "Content-Range", "Accept-Range
 
 
 class MapProxy:
-    def __init__(self, nomad_url: str, cache: TileCache | None = None) -> None:
+    def __init__(self, nomad_url: str, cache: TileCache | None = None, web: tuple[Path, ...] = (WEB,)) -> None:
         self.nomad = nomad_url.rstrip("/")
         self.cache = cache
+        self.roots = web  # directories the page's files come from, searched in order
+
+    def find(self, name: str) -> Path | None:
+        for root in self.roots:
+            f = (root / name).resolve()
+            if root.resolve() in f.parents and f.is_file():
+                return f
+        return None
 
     def handle(self, h, base: str, index: str = "index.html") -> bool:
         """Answer a GET for the map page's files. base is how the browser reached us (it goes into the
@@ -38,7 +46,7 @@ class MapProxy:
             elif path == "/glyphs.js":
                 body = f"const GLYPHS = {json.dumps(icons.GLYPHS)}; const SVG_ATTRS = {json.dumps(icons.SVG_ATTRS)};"
                 self._send(h, 200, body.encode(), "text/javascript")
-            elif path == "/" or (WEB / path.lstrip("/")).is_file():
+            elif path == "/" or self.find(path.lstrip("/")):
                 self._static(h, index)
             else:
                 return False
@@ -56,8 +64,8 @@ class MapProxy:
 
     def _static(self, h, index: str) -> None:
         name = h.path.split("?")[0].lstrip("/") or index
-        f = (WEB / name).resolve()
-        if WEB.resolve() not in f.parents or not f.is_file():
+        f = self.find(name)
+        if not f:
             return self._send(h, 404, b"not found", "text/plain")
         self._send(h, 200, f.read_bytes(), TYPES.get(f.suffix, "application/octet-stream"))
 
