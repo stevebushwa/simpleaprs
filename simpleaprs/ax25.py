@@ -112,13 +112,27 @@ def plausible_header(data: bytes) -> str:
     return f"{calls[1]}>{calls[0]}" if len(calls) >= 2 else ""
 
 
+def repair_one_bit(data: bytes) -> bytes | None:
+    """data (frame plus FCS) with the one flipped bit that makes its checksum pass, or None. A frame with two
+    or more bad bits can pass by luck (about 1 in 190 tries), so only offer this for frames that already look
+    like AX.25."""
+    buf = bytearray(data)
+    for i in range(len(buf) * 8):
+        buf[i >> 3] ^= 1 << (i & 7)
+        if crc16_x25(bytes(buf[:-2])).to_bytes(2, "little") == bytes(buf[-2:]):
+            return bytes(buf)
+        buf[i >> 3] ^= 1 << (i & 7)
+    return None
+
+
 class HdlcDecoder:
-    """Feed it NRZI-decoded bits; yields frames whose FCS checks out.
-    stats counts what else was heard: corrupt = a packet whose checksum failed, slip = one that lost or gained
-    a bit; last_bad is who it looked like it came from."""
+    """Feed it NRZI-decoded bits; yields frames whose FCS checks out, or that one flipped bit makes check out.
+    stats counts what else was heard: fixed = ok frames that needed that one bit put right (also counted in ok),
+    corrupt = a packet whose checksum failed, slip = one that lost or gained a bit; last_bad is who it looked
+    like it came from."""
 
     def __init__(self) -> None:
-        self.stats = {"ok": 0, "corrupt": 0, "slip": 0}
+        self.stats = {"ok": 0, "fixed": 0, "corrupt": 0, "slip": 0}
         self.last_bad = ""
         self._reset()
 
@@ -149,8 +163,14 @@ class HdlcDecoder:
                         result = data[:-2]
                         self.stats["ok"] += 1
                     elif who := plausible_header(data):
-                        self.stats["corrupt" if len(body) % 8 == 0 else "slip"] += 1
-                        self.last_bad = who
+                        fixed = repair_one_bit(data) if len(body) % 8 == 0 else None
+                        if fixed:
+                            result = fixed[:-2]
+                            self.stats["ok"] += 1
+                            self.stats["fixed"] += 1
+                        else:
+                            self.stats["corrupt" if len(body) % 8 == 0 else "slip"] += 1
+                            self.last_bad = who
             self.cur = []
             self.active = True
             return result

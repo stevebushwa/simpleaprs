@@ -311,7 +311,10 @@ class Server:
         """Say once a minute, in the log and on the page, if packets were heard but not decoded."""
         now = self.radio.rx_stats()
         d = {k: now[k] - self._rx_seen.get(k, 0) for k in ("ok", "corrupt", "slip", "clipped", "loud")}
+        fixed = now["fixed"] - self._rx_seen.get("fixed", 0)
         self._rx_seen = now
+        if fixed:
+            log(f"Receive: repaired {fixed} packet{'s' * (fixed != 1)} that had a single flipped bit")
         note = rxdiag.explain(**d, last_bad=now["last_bad"]) if not self.radio_note else ""
         if note:
             log(note)
