@@ -47,6 +47,12 @@ class WebUI(BaseWebUI):
             else:
                 events, more = self.hub.older(before, max(limit, 1))
                 h.reply(200, {"events": events, "more": more})
+        elif path == "/api/certificate":  # the certificate this server made for itself, for installing on a device so it stops warning
+            cert = getattr(self.app, "cert_file", None)
+            if not cert or not cert.is_file():
+                return False
+            h.reply(200, cert.read_text(), "application/x-x509-ca-cert",
+                    headers=(("Content-Disposition", 'attachment; filename="simpleaprs.crt"'),))
         elif path == "/api/passcode":
             call = parse_qs(urlparse(h.path).query).get("call", [""])[0].strip()
             h.reply(200, {"passcode": str(igate.passcode(call)) if call else ""})

@@ -342,3 +342,8 @@ def test_forget_inactive_needs_a_session_and_forgets_grey_stations(srv):
     cookie, _ = setup(srv)
     st, data, _ = call(srv, "POST", "/api/forget-inactive", {}, cookie=cookie)
     assert (st, data["removed"]) == (200, 1) and "OLD1" not in srv.tracker.stations
+
+
+def test_a_plain_http_server_has_no_certificate_to_offer(srv):
+    cookie, _ = setup(srv)
+    assert call(srv, "GET", "/api/certificate", cookie=cookie)[0] == 404

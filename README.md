@@ -40,8 +40,8 @@ The install has two optional parts: `[gui]` (PySide6, the desktop app) and `[ser
   The RX level meter follows too: a client shows the audio level of the radio it is watching.
   Another simpleaprs set to "Connect to another simpleaprs" (server address + token) follows it: same map, stations,
   packets and messages, no radio needed. The token is required to watch unless you untick it, and always required to
-  transmit; clients can only ask for a beacon or a message, never send raw frames. Traffic is plain HTTP, so keep it
-  on your LAN or a VPN (e.g. Tailscale). Remembered stations for a followed server are kept separately from local ones.
+  transmit; clients can only ask for a beacon or a message, never send raw frames. Traffic is https with a certificate the
+  server makes for itself (plain http with `--http`), so keep it on your LAN or a VPN (e.g. Tailscale). Remembered stations for a followed server are kept separately from local ones.
 
 - **Settings** are in tabs: Station, Radio, Alerts, Map, Network, iGate, Digipeater.
 - **iGate** (desktop app with a local radio, or the terminal server): Settings > iGate gates what the radio hears to an APRS-IS server (default
@@ -133,12 +133,28 @@ first. It reaches the phone through an iGate that hears you. A reply comes back 
 if an iGate has heard you recently; the person replying should start with `@` and your callsign, since the service forgets who
 you texted when it restarts.
 
+**When a message arrives.** A card appears in the middle of the map for each message or bulletin that comes in (with Reply for a
+message), and stays until you dismiss it; one that arrived while the page was shut or the phone was asleep gets its card when the
+page reconnects. The Alerts button at the top turns on a chime, a vibration, and a notification through the browser when the
+page isn't the tab in front (remembered per browser). Settings > Notifications picks, for this browser, which of those happen,
+whether messages and bulletins both count, and has a button to send a test. Browsers only allow notifications, and the service worker they need on a
+phone, on https pages (or localhost), so over plain `http://` on the LAN you get the chime and vibration while the page is
+open, and the status line says why notifications are off. A page that the phone has put to sleep can't hear the server: waking
+it brings back the cards for what it missed. Alerts while the page is closed would need real push notifications, which this
+doesn't do.
+
 **Conversations.** Direct messages are kept in a folder for whoever they are with, newest conversation last, closed until you
 open it (a bold name means something new arrived while it was closed). Opening one addresses the reply form to that station.
 Bulletins stay in the list between the folders.
 
-**It is plain HTTP.** The login keeps other people on your network, and other web pages, out; it doesn't hide anything from
-someone who can watch the network, so keep the server on your LAN or a VPN such as Tailscale, never on the internet. As a
+**It is https with a certificate it made for itself.** The first time, the browser warns that it can't vouch for the certificate:
+continue past the warning (the page is then a "secure context", which browsers require before they allow notifications). The
+certificate is made once with `openssl` and kept in `~/.config/simpleaprs/tls`; delete the folder to make a new one, or run
+with `--http` for plain http. Typing `http://` still works: it is sent on to `https://`. The encryption hides the traffic from
+someone listening in, but without a certificate anyone trusts it doesn't prove who you are talking to, and the login only
+keeps other people on your network, and other web pages, out; keep the server on your LAN or a VPN such as Tailscale, never
+on the internet. If a phone's browser still refuses notifications because of the certificate, install it on the phone
+as a trusted certificate: Settings > Access > Certificate downloads it, with the steps for Android, iPhone and computers. As a
 guard against *other web pages* using your logged-in browser to reach it, the server only answers requests addressed to an
 IP address, `localhost`, `*.local`, or a one-word host name, and refuses cross-site and non-JSON requests; if you reach it by
 another name, add `--allow-host that.name`.

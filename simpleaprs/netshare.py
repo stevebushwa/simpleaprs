@@ -51,7 +51,7 @@ def validate_tx(d) -> tuple[dict | None, str]:
 class ShareServer(WebServer):
     def __init__(self, hub: Hub, port: int, token: str, require_token: bool, allow_tx: bool, hello, on_tx,
                  host: str = "0.0.0.0", snapshot=lambda: {}, web=None, open_access: bool = False,
-                 allowed_hosts: tuple[str, ...] = ()) -> None:
+                 allowed_hosts: tuple[str, ...] = (), tls=None) -> None:
         """hello() -> dict describing this station; snapshot() -> the stations it remembers;
         on_tx(request) is called from a server thread.
 
@@ -61,7 +61,7 @@ class ShareServer(WebServer):
         self.hub, self.token, self.require_token, self.allow_tx = hub, token, require_token, allow_tx
         self.hello, self.on_tx, self.snapshot = hello, on_tx, snapshot
         super().__init__(port, web, host=host, allowed_hosts=allowed_hosts, open_access=open_access,
-                         banner="simpleaprs share server\n", extra_get=self._get, extra_post=self._post)
+                         banner="simpleaprs share server\n", extra_get=self._get, extra_post=self._post, tls=tls)
 
     def _token_ok(self, h) -> bool:
         if self.open_access:

@@ -5,10 +5,12 @@ import argparse
 import sys
 
 EPILOG = """\
-Headless mode shares the radio over HTTP: open the web page it prints in any browser on the network. The first
-visit creates your login, and the page's Settings has everything else. Desktop apps follow it with the access
-token shown under Settings > Access (Settings > "Connect to another simpleaprs"). Keep it on a LAN or VPN: it
-is plain HTTP. --setup asks the setup questions in the terminal instead. Other options apply to this run only,
+Headless mode shares the radio over https: open the web page it prints in any browser on the network (the browser
+warns about the certificate, which the server makes for itself: continue past it). The first visit creates your
+login, and the page's Settings has everything else. Desktop apps follow it with the access token shown under
+Settings > Access (Settings > "Connect to another simpleaprs"). Keep it on a LAN or VPN: the certificate hides
+the traffic but proves nothing about who is at the other end. --http serves plain http instead (browsers then
+won't allow notifications). --setup asks the setup questions in the terminal instead. Other options apply to this run only,
 unless --save is given.
 """
 
@@ -21,6 +23,7 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--setup", action="store_true", help="(headless) answer the setup questions in the terminal (the web page's Settings does the same)")
     ap.add_argument("--reset-login", action="store_true", help="(headless) forget the web page's login: the next visitor creates a new one")
     ap.add_argument("--list-devices", action="store_true", help="(headless) print the audio devices and exit")
+    ap.add_argument("--http", action="store_true", help="(headless) serve plain http, not https (browsers only allow notifications on https)")
     ap.add_argument("-q", "--quiet", action="store_true", help="(headless) don't print every packet heard")
     ap.add_argument("--save", action="store_true", help="(headless) keep the options below as the saved settings")
     g = ap.add_argument_group("settings (headless)")
@@ -97,7 +100,7 @@ def headless(args: argparse.Namespace) -> int:
     if args.save:
         cfg.save()
         print(f"Saved to {PATH}")
-    return hl.run(cfg, args.quiet, tuple(args.allow_host))
+    return hl.run(cfg, args.quiet, tuple(args.allow_host), tls=not args.http)
 
 
 SERVER_ONLY_LINUX = ("The terminal server (--headless, --list-devices) only runs on Linux, which is where a Raspberry Pi or other\n"

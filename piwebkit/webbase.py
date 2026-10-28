@@ -100,7 +100,7 @@ class BaseWebUI:
         if self.auth and path == "/api/account":
             h.reply(200, self.account_view())
             return True
-        return self.proxy.handle(h, f"http://{h.headers.get('Host', '')}", index=self.index)
+        return self.proxy.handle(h, f"{'https' if h.secure else 'http'}://{h.headers.get('Host', '')}", index=self.index)
 
     # --- POST ---------------------------------------------------------------------------------------
 
@@ -125,11 +125,11 @@ class BaseWebUI:
 
     def _start(self, h, remember: bool) -> None:
         token, max_age = self.auth.start_session(remember)
-        cookie = f"{self.cookie_name}={token}; Path=/; HttpOnly; SameSite=Strict" + (f"; Max-Age={max_age}" if max_age else "")
+        cookie = f"{self.cookie_name}={token}; Path=/; HttpOnly; SameSite=Strict" + ("; Secure" if h.secure else "") + (f"; Max-Age={max_age}" if max_age else "")
         h.reply(200, {"ok": True}, headers=(("Set-Cookie", cookie),))
 
     def _end(self, h) -> None:
-        h.reply(200, {"ok": True}, headers=(("Set-Cookie", f"{self.cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),))
+        h.reply(200, {"ok": True}, headers=(("Set-Cookie", f"{self.cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" + ("; Secure" if h.secure else "")),))
 
     def _setup(self, h) -> None:
         d = h.read_json()

@@ -12,6 +12,8 @@ import json
 import queue
 import secrets
 import socket
+import ssl
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +24,13 @@ from .hub import Hub
 
 MAX_CLIENTS = 20
 KEEPALIVE_S = 15
+
+
+class _Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address) -> None:
+        """A client that gave up, or a browser turning back at the certificate warning, is not worth a traceback."""
+        if not isinstance(sys.exc_info()[1], OSError):
+            super().handle_error(request, client_address)
 
 
 def new_token() -> str:
@@ -63,20 +72,56 @@ class WebServer:
     def __init__(self, port: int, web=None, host: str = "0.0.0.0", allowed_hosts: tuple[str, ...] = (),
                  open_access: bool = False, banner: str = "",
                  extra_get: Callable[[BaseHTTPRequestHandler], bool] | None = None,
-                 extra_post: Callable[[BaseHTTPRequestHandler], bool] | None = None) -> None:
+                 extra_post: Callable[[BaseHTTPRequestHandler], bool] | None = None,
+                 tls: ssl.SSLContext | None = None) -> None:
         """web: the page (hub, intro(), session_ok(h), protected, handle(h), handle_post(h)), or None.
         extra_get / extra_post(handler) -> True if they answered the request. open_access skips the login
-        and checks where requests come from instead. banner is what GET / says when nothing else does."""
-        self.web, self.open_access, self.banner = web, open_access, banner
+        and checks where requests come from instead. banner is what GET / says when nothing else does. tls: serve
+        https on the port (a plain http request to it is sent on to https instead of being refused)."""
+        self.web, self.open_access, self.banner, self.tls = web, open_access, banner, tls
         self.allowed_hosts = tuple(h.lower() for h in allowed_hosts)
         self.stopped = False
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
             timeout = 15  # drop connections that stall while sending their request
+            plain = False  # a plain http request that came to the https port
 
             def log_message(self, *a):
                 pass
+
+            def setup(self):
+                if outer.tls:  # one port for both: a TLS handshake starts with 0x16, anything else is someone typing http://
+                    self.request.settimeout(self.timeout)
+                    if self.request.recv(1, socket.MSG_PEEK) == b"\x16":
+                        self.request = outer.tls.wrap_socket(self.request, server_side=True)
+                    else:
+                        self.plain = True
+                super().setup()
+
+            def handle(self):
+                if self.plain:
+                    return self._to_https()
+                super().handle()
+
+            def _to_https(self) -> None:
+                """Answer a plain http request with where to find the page over https."""
+                parts = self.rfile.readline(2048).decode("latin-1").split()
+                host = ""
+                for _ in range(64):
+                    line = self.rfile.readline(2048).decode("latin-1")
+                    if line in ("", "\r\n", "\n"):
+                        break
+                    if line.lower().startswith("host:"):
+                        host = line.split(":", 1)[1].strip()
+                if len(parts) < 2 or not parts[1].startswith("/") or not host_ok(host, outer.allowed_hosts):
+                    return
+                self.wfile.write(f"HTTP/1.1 308 Permanent Redirect\r\nLocation: https://{host}{parts[1]}\r\n"
+                                 "Content-Length: 0\r\nConnection: close\r\n\r\n".encode("latin-1"))
+
+            @property
+            def secure(self) -> bool:
+                return isinstance(self.connection, ssl.SSLSocket)
 
             def reply(self, code: int, obj, ctype: str = "application/json", headers: tuple = ()) -> None:
                 body = obj.encode() if isinstance(obj, str) else json.dumps(obj).encode()
@@ -192,7 +237,7 @@ class WebServer:
                 except (OSError, ValueError):
                     pass
 
-        self.httpd = ThreadingHTTPServer((host, port), Handler)
+        self.httpd = _Server((host, port), Handler)
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 

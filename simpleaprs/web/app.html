@@ -44,6 +44,16 @@
   th[data-sort]::after { content: attr(data-arrow); }
   td .coords { color: var(--dim); font-size: 11px; }
   #find { width: 190px; }
+  #bell.on { color: var(--accent); border-color: var(--accent); }
+  #cards { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 6; width: min(380px, calc(100% - 24px));
+           display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+  .card { pointer-events: auto; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+          border-radius: 8px; box-shadow: 0 6px 24px #0006; padding: 10px 12px; }
+  .card.bulletin { border-left-color: #e08a00; }
+  .card h4 { margin: 0; font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; gap: 8px; }
+  .card .body { font-size: 16px; word-break: break-word; margin: 4px 0 8px; white-space: pre-wrap; }
+  .card .via { font-size: 12px; color: var(--dim); }
+  .card .actions { display: flex; gap: 6px; justify-content: flex-end; }
   #psearch { width: 170px; margin-left: 10px; padding: 3px 8px; }
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: var(--bar); }
@@ -83,6 +93,7 @@
   .fld .unit { color: var(--dim); white-space: nowrap; }
   .hint { color: var(--dim); font-size: 12px; margin-top: 3px; }
   .err { color: #c33; font-size: 12px; margin-top: 3px; }
+  .savebar button { white-space: nowrap; }
   .savebar { display: flex; gap: 10px; align-items: center; margin-top: 4px; position: sticky; bottom: 0; background: var(--bg); padding: 8px 0; }
   .notice { background: var(--bar); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; }
   h3 { margin: 18px 0 8px; font-size: 14px; }
@@ -101,6 +112,7 @@
     <label>Show <select id="filter">
       <option value="all">All stations</option><option value="weather">Weather stations</option><option value="igate">iGates</option>
       <option value="digi">Digipeaters</option><option value="mobile">Mobile (vehicles, aircraft, boats)</option></select></label>
+    <button class="ghost" id="bell" title="Sound, vibration and a browser notification when a message or bulletin arrives">Alerts off</button>
     <button class="act" id="beacon" disabled>Beacon now</button>
     <button class="ghost" id="logout" hidden>Log out</button>
   </div>
@@ -113,7 +125,7 @@
   </div>
 </header>
 <main>
-  <div id="mapbox"><div id="map"></div><div id="msg"></div></div>
+  <div id="mapbox"><div id="map"></div><div id="msg"></div><div id="cards"></div></div>
   <aside>
     <nav><button data-tab="stations" class="on">Stations</button><button data-tab="messages">Messages</button><button data-tab="packets">Raw packets</button><button data-tab="settings">Settings</button></nav>
     <div class="tab" id="stations"><table><thead><tr><th data-sort="call" title="Sort by callsign">Station</th><th data-sort="heard" title="Sort by when last heard">Heard</th><th data-sort="dist" title="Sort by distance from you">Distance</th><th>Comment</th></tr></thead><tbody id="rows"></tbody></table></div>
@@ -313,6 +325,127 @@
     if (stick) box.scrollTop = box.scrollHeight;
   };
 
+  // A message or bulletin that arrives: a card in the middle of the map and, with the bell on, a chime, a vibration and (if this
+  // tab isn't the one in front) a notification through the browser. `seen` is the newest message this browser has already
+  // shown, so ones that came in while it was shut or asleep still get a card when it reconnects, and the history on a first visit doesn't.
+  let seen = Number(store.get("msgSeen")) || 0;
+  const firstVisit = seen === 0;
+  let bell = store.get("bell") === "on", audio = null, lastChime = 0, worker = null;
+  // What an alert does, chosen in Settings > Notifications (this browser's own: a phone and a computer want different things)
+  const prefs = {card: true, chime: true, vibrate: true, notify: true, messages: true, bulletins: true};
+  try { Object.assign(prefs, JSON.parse(store.get("alertPrefs") || "{}")); } catch {}
+  const setPref = (key, on) => { prefs[key] = on; store.set("alertPrefs", JSON.stringify(prefs)); };
+  const unlockAudio = () => { try { audio ??= new AudioContext(); audio.resume(); } catch {} };
+  const chime = () => {
+    if (Date.now() - lastChime < 1500) return;  // a batch of missed messages is one chime, not a burst
+    lastChime = Date.now(); unlockAudio();
+    try {
+      const t = audio.currentTime;
+      [[880, 0], [1175, 0.18]].forEach(([hz, at]) => {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = hz; o.connect(g).connect(audio.destination);
+        g.gain.setValueAtTime(0.0001, t + at); g.gain.exponentialRampToValueAtTime(0.3, t + at + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.4);
+        o.start(t + at); o.stop(t + at + 0.45);
+      });
+    } catch {}
+  };
+  const notifyProblem = () => !("Notification" in window) ? "this browser has no notifications"
+    : !window.isSecureContext ? "browsers only allow notifications on https pages (or localhost)"
+    : Notification.permission === "denied" ? "notifications are blocked for this site in the browser's settings" : "";
+  const notify = async (title, body, tag, force = false) => {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    if (!force && document.visibilityState === "visible" && document.hasFocus()) return;  // the card and chime are enough while it's in front
+    const opts = {body, tag, vibrate: [200, 100, 200]};  // a tag of its own: two messages are two notifications, not one replacing the other
+    worker ??= ("serviceWorker" in navigator && window.isSecureContext)
+      ? navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).catch(() => null) : Promise.resolve(null);
+    try { const reg = await worker; if (reg) await reg.showNotification(title, opts); else new Notification(title, opts); } catch {}
+  };
+  const setBell = on => {
+    bell = on; store.set("bell", on ? "on" : "off");
+    $("bell").textContent = on ? "Alerts on" : "Alerts off"; $("bell").classList.toggle("on", on);
+    if (!$("settings").hidden && group === "Notifications") renderSettings();
+  };
+  setBell(bell);
+  if (bell) document.addEventListener("pointerdown", unlockAudio, {once: true});  // a reload needs a touch before the browser lets it make sound
+  const askNotifications = async () => {
+    if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission().catch(() => {});
+    if (!$("settings").hidden && group === "Notifications") renderSettings();
+  };
+  const turnOn = async () => {
+    unlockAudio(); chime(); navigator.vibrate?.(150);  // a taste of it, and the tap the browser wants before it allows either
+    setBell(true);
+    if (prefs.notify) await askNotifications();
+    const why = prefs.notify ? notifyProblem() : "";
+    say(why ? `Alerts on: sound and vibration only (${why})` : "Alerts on", 9000);
+  };
+  $("bell").onclick = () => bell ? setBell(false) : turnOn();
+  const describe = ev => {  // who a message or bulletin is from, and what it says
+    const bulletin = ev.kind === "bulletin", via = ev.text.match(/\s+\(via iGate ([^)]+)\)$/), text = via ? ev.text.slice(0, via.index) : ev.text;
+    const m = bulletin ? text.match(/^(\S+) from (\S+?): ([\s\S]*)$/) : text.match(/^([^:\s]+): ([\s\S]*)$/);
+    const from = bulletin ? m?.[2] : ev.peer || m?.[1];
+    return {bulletin, via: via?.[1], from, body: m ? m[m.length - 1] : text,
+            title: (bulletin ? `Bulletin ${m ? m[1] + " from " + m[2] : ""}` : `Message from ${from || "someone"}`).trim()};
+  };
+  const showCard = (d, t) => {
+    const card = mk("div", {className: "card" + (d.bulletin ? " bulletin" : "")});
+    const close = mk("button", {className: "ghost", textContent: "Dismiss", onclick: () => card.remove()});
+    const actions = mk("div", {className: "actions"}, ...(d.bulletin || !d.from ? [] : [mk("button", {className: "act", textContent: "Reply", onclick: () => {
+      document.querySelector("nav button[data-tab=messages]").click();
+      $("mode").value = "message"; $("to").value = d.from; syncCompose(); $("text").focus(); card.remove();
+    }})]), close);
+    card.append(mk("h4", {}, mk("span", {textContent: d.title}), mk("span", {textContent: dated(t)})), mk("div", {className: "body", textContent: d.body}),
+                ...(d.via ? [mk("div", {className: "via", textContent: `via iGate ${d.via}`})] : []), actions);
+    $("cards").prepend(card);
+    while ($("cards").childElementCount > 5) $("cards").lastChild.remove();  // the rest are in the Messages tab
+  };
+  const alertFor = ev => {
+    if (ev.text.startsWith("me ->") || ev.t <= seen) return;  // ours, or already shown
+    seen = ev.t; store.set("msgSeen", String(seen));
+    if (firstVisit && !synced) return;  // the history of a first visit is not news
+    const d = describe(ev);
+    if (!(d.bulletin ? prefs.bulletins : prefs.messages)) return;
+    if (prefs.card) showCard(d, ev.t);
+    if (!bell) return;
+    if (prefs.chime) chime();
+    if (prefs.vibrate) navigator.vibrate?.([200, 100, 200]);
+    if (prefs.notify) notify(d.title, d.body, "msg-" + ev.t);
+  };
+  // Settings > Notifications: what an alert does in this browser, and a way to try it
+  const notifyBox = () => {
+    const box = mk("div", {});
+    const check = (label, key, hint) => {
+      const cb = mk("input", {type: "checkbox", checked: !!prefs[key], onchange: async () => { setPref(key, cb.checked); if (key === "notify" && cb.checked) await askNotifications(); }});
+      return mk("div", {className: "fld"}, mk("label", {className: "t"}, cb, " " + label), ...(hint ? [mk("div", {className: "hint", textContent: hint})] : []));
+    };
+    const master = mk("input", {type: "checkbox", checked: bell, onchange: () => master.checked ? turnOn() : setBell(false)});
+    box.append(mk("div", {className: "hint", textContent: "These apply to this browser only. A card on the map shows for each message that arrives; Alerts adds a chime, vibration and a notification."}),
+      mk("div", {className: "fld"}, mk("label", {className: "t"}, master, " Alerts on")),
+      mk("h3", {textContent: "When a message or bulletin arrives"}),
+      check("Show a card in the middle of the map", "card"),
+      check("Play a chime", "chime", "Needs one tap on the page after it loads before the browser allows sound."),
+      check("Vibrate", "vibrate", "vibrate" in navigator ? "" : "This browser can't vibrate."),
+      check("Send a notification when this tab isn't in front", "notify"),
+      mk("h3", {textContent: "Alert for"}),
+      check("Messages to me", "messages"), check("Bulletins", "bulletins"));
+    const why = prefs.notify ? notifyProblem() : "";
+    const perm = !("Notification" in window) ? "not available" : Notification.permission === "default" ? "not asked yet" : Notification.permission;
+    box.append(mk("div", {className: "hint", textContent: `Browser notifications: ${perm}.${why ? " Off because " + why + (window.isSecureContext ? "." : " (see Access > Certificate).") : ""}`}));
+    const test = mk("button", {type: "button", className: "ghost", textContent: "Send a test", onclick: () => {
+      const d = describe({kind: "direct", text: `TEST: This is what a message looks like.`, peer: "TEST"});
+      if (prefs.card) showCard(d, Date.now() / 1000);
+      if (prefs.chime) chime();
+      if (prefs.vibrate) navigator.vibrate?.([200, 100, 200]);
+      if (prefs.notify) notify("Test", d.body, "test", true);  // shown even with this tab in front, so you can see what it looks like
+    }});
+    box.append(mk("div", {className: "savebar"}, test, mk("span", {className: "hint", textContent: "Uses the choices above, whether or not Alerts is on."})));
+    return box;
+  };
+  // Settings > Access: the certificate this server made for itself
+  const certBox = () => mk("div", {},
+    mk("h3", {textContent: "Certificate"}),
+    mk("div", {className: "hint", textContent: "This page is served with a certificate the server made for itself, which is why browsers warn about it. Install it on a device and that device stops warning and lets the page send notifications. Android: Settings > Security > Install a certificate > CA certificate. iPhone: open the file, install the profile, then turn it on under Settings > General > About > Certificate Trust Settings. Computer: open the file and add it to the trusted certificates."}),
+    mk("div", {className: "savebar"}, mk("button", {type: "button", className: "ghost", textContent: "Download certificate", onclick: () => { location.href = "/api/certificate"; }})));
+
   // settings: the form is drawn from what the server says its settings are, so the two can't disagree
   let schema = null, values = {}, original = {}, group = "Station", settingsErr = {}, settingsMsg = "";
   const mk = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
@@ -373,16 +506,17 @@
     if (!schema) return;
     if (!schema.status.configured) root.append(mk("div", {className: "notice", textContent: "Welcome. Enter your callsign and position under Station, pick the radio's sound card under Radio, then press Save."}));
     const sub = mk("div", {className: "sub"});
-    for (const g of schema.groups) {
+    for (const g of [...schema.groups, "Notifications"]) {
       const b = mk("button", {type: "button", textContent: g, className: g === group ? "on" : ""});
       b.onclick = () => { group = g; renderSettings(); };
       sub.append(b);
     }
     root.append(sub);
+    if (group === "Notifications") { root.append(notifyBox()); root.scrollTop = keep; return; }  // this browser's own, applied at once: no Save
     for (const f of schema.fields) if (f.group === group && (!f.shows_if || values[f.shows_if])) root.append(field(f));
     if (group === "Radio") root.append(mk("div", {className: "hint", textContent: "Radio now: " + schema.status.radio}));
     if (group === "iGate" && schema.status.igate) root.append(mk("div", {className: "hint", textContent: schema.status.igate}));
-    if (group === "Access") root.append(accountBox());
+    if (group === "Access") { root.append(accountBox()); if (location.protocol === "https:") root.append(certBox()); }
     const save = mk("button", {className: "act", textContent: "Save"});
     save.onclick = saveSettings;
     root.append(mk("div", {className: "savebar"}, save, mk("span", {className: settingsErr[""] ? "err" : "hint", textContent: settingsErr[""] || settingsMsg})));
@@ -580,7 +714,7 @@
       case "station": onStation(ev); if (synced) logActivity(`Heard ${ev.call}`); break;
       case "gone": forget(ev.calls); break;
       case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : "", Infinity); showSpan(false); if (synced && ev.tx) logActivity("Transmitted a packet"); break;
-      case "message": addMessage(ev); if (synced) logActivity(ev.text.length > 70 ? ev.text.slice(0, 70) + "..." : ev.text); break;
+      case "message": addMessage(ev); alertFor(ev); if (synced) logActivity(ev.text.length > 70 ? ev.text.slice(0, 70) + "..." : ev.text); break;
     }
   };
   const savedTab = store.get("tab"); if (savedTab) document.querySelector(`nav button[data-tab=${savedTab}]`)?.click();

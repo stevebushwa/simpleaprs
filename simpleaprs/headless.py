@@ -15,10 +15,11 @@ import time
 from . import aprs, rxdiag
 from .ax25 import Frame
 from . import webconfig
+from piwebkit import tls as piwebkit_tls
 from piwebkit.auth import Auth
 from piwebkit.hub import Hub
 from piwebkit.server import lan_ip
-from .config import AUTH_PATH, FRAMES_PATH, PATH, STATIONS_PATH, WEB_EVENTS_PATH, Config
+from .config import AUTH_PATH, FRAMES_PATH, PATH, STATIONS_PATH, TLS_DIR, WEB_EVENTS_PATH, Config
 from .digipeater import Digipeater
 from .igate import IGate, passcode
 from .mapserver import MapProxy, tile_cache
@@ -136,8 +137,10 @@ def setup(cfg: Config) -> Config:
 # --- the server -----------------------------------------------------------------------------------
 
 class Server:
-    def __init__(self, cfg: Config, quiet: bool = False, allowed_hosts: tuple[str, ...] = (), auth: Auth | None = None) -> None:
-        self.cfg, self.quiet, self.allowed_hosts = cfg, quiet, allowed_hosts
+    def __init__(self, cfg: Config, quiet: bool = False, allowed_hosts: tuple[str, ...] = (), auth: Auth | None = None,
+                 tls: bool = False) -> None:
+        """tls: serve the web page and clients over https, with a self-signed certificate made on first use."""
+        self.cfg, self.quiet, self.allowed_hosts, self.tls = cfg, quiet, allowed_hosts, tls
         self.auth = auth or Auth(AUTH_PATH)
         self.web: WebUI | None = None
         self.radio_note = "Not started"  # "" while the radio is listening, else what is wrong with it
@@ -164,9 +167,14 @@ class Server:
         self.hub.load(FRAMES_PATH)
         cache = tile_cache(c.map_cache_mb) if c.map_cache else None
         self.web = WebUI(self.web_hub, self.tracker, MapProxy(c.nomad_url, cache), c.share_allow_tx, self.auth, self)
+        tls = piwebkit_tls.context(TLS_DIR) if self.tls else None
+        if self.tls and not tls:
+            print("Could not make a certificate (is the openssl command installed?): serving plain http instead.", file=sys.stderr)
+        self.secure = tls is not None
+        self.cert_file = TLS_DIR / "cert.pem" if self.secure else None  # the page offers it for download (Settings > Access)
         try:  # desktop apps follow with the access token; the web page has its login
             self.share = ShareServer(self.hub, c.share_port, self.auth.api_token, True, c.share_allow_tx, self._hello, self.remote_tx,
-                                     snapshot=self.tracker.data, web=self.web, allowed_hosts=self.allowed_hosts)
+                                     snapshot=self.tracker.data, web=self.web, allowed_hosts=self.allowed_hosts, tls=tls)
         except OSError as e:
             print(f"Cannot listen on port {c.share_port}: {e}", file=sys.stderr)
             return False
@@ -174,7 +182,9 @@ class Server:
         self._start_gateways()
         addr = f"{lan_ip()}:{self.share.port}"
         print(f"simpleaprs server" + (f" for {c.callsign}" if c.callsign else ""))
-        print(f"  Web page       http://{addr}/")
+        print(f"  Web page       {'https' if self.secure else 'http'}://{addr}/")
+        if self.secure:
+            print("                 The browser will warn about the certificate (it is one this server made for itself): continue past it")
         if not self.auth.configured:
             print("                 Open it to create your login and finish setting up")
         elif not c.callsign:
@@ -186,7 +196,8 @@ class Server:
             print(f"  iGate          to {c.igate_server}" + (f", and messages for stations heard here back to RF (within {c.igate_radius_km} km)" if c.igate_to_rf else ""))
         if self.digi:
             print("  Digipeater     " + ("wide-area (WIDE1-1, WIDE2-N)" if c.digi_wide else "fill-in (WIDE1-1)") + f" and {c.callsign}")
-        print("  Traffic is plain HTTP: keep it on your LAN or a VPN, never the open internet.")
+        print("  Traffic is encrypted but the certificate proves nothing: keep it on your LAN or a VPN, never the open internet."
+              if self.secure else "  Traffic is plain HTTP: keep it on your LAN or a VPN, never the open internet.")
         print("  Ctrl+C to stop\n", flush=True)
         now = time.monotonic()
         self.next_save = now + 30
@@ -419,8 +430,8 @@ class Server:
             self.transmit(aprs.build_message(req["to"], req["text"], msg_id))
 
 
-def run(cfg: Config, quiet: bool = False, allowed_hosts: tuple[str, ...] = (), auth: Auth | None = None) -> int:
-    server = Server(cfg, quiet, allowed_hosts, auth)
+def run(cfg: Config, quiet: bool = False, allowed_hosts: tuple[str, ...] = (), auth: Auth | None = None, tls: bool = True) -> int:
+    server = Server(cfg, quiet, allowed_hosts, auth, tls)
     if not server.start():
         return 1
     stop = threading.Event()

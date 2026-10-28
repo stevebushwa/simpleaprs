@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import threading
 import time
 import urllib.error
@@ -9,10 +10,25 @@ import urllib.request
 
 from PySide6.QtCore import QObject, Signal
 
+# A server's https certificate is one it made for itself, so there is nothing to check it against: the connection is private
+# from anyone listening in, but it is no proof who is at the other end (neither was plain http).
+_ANY_CERT = ssl.create_default_context()
+_ANY_CERT.check_hostname = False
+_ANY_CERT.verify_mode = ssl.CERT_NONE
+
 
 def normalize(url: str) -> str:
+    """The address as typed, with a scheme: https if the server answers to it, else http (a server that is older, or run with --http)."""
     url = url.strip().rstrip("/")
-    return url if "://" in url else "http://" + url
+    if "://" in url:
+        return url
+    try:
+        urllib.request.urlopen("https://" + url + "/", timeout=5, context=_ANY_CERT).close()
+    except urllib.error.HTTPError:  # it answered, whatever it said
+        return "https://" + url
+    except (OSError, ValueError):
+        return "http://" + url
+    return "https://" + url
 
 
 class RemoteClient(QObject):
@@ -27,7 +43,7 @@ class RemoteClient(QObject):
 
     def start(self, url: str, token: str) -> None:
         self._gen += 1
-        self._url, self._token = normalize(url), token
+        self._url, self._token = url.strip().rstrip("/"), token
         threading.Thread(target=self._run, args=(self._gen, self._url, token), daemon=True).start()
 
     def stop(self) -> None:
@@ -40,9 +56,12 @@ class RemoteClient(QObject):
         wait = 2
         while gen == self._gen:
             self.state.emit(f"Connecting to {url}...")
+            url = normalize(url)  # here and not in start(): finding out whether it speaks https can take a few seconds
+            if gen == self._gen:
+                self._url = url
             try:
                 req = urllib.request.Request(url + "/api/events", headers=self._headers(token))
-                with urllib.request.urlopen(req, timeout=40) as r:  # the server sends a keepalive every 15 s
+                with urllib.request.urlopen(req, timeout=40, context=_ANY_CERT) as r:  # the server sends a keepalive every 15 s
                     wait = 2
                     for line in r:
                         if gen != self._gen:
@@ -69,10 +88,10 @@ class RemoteClient(QObject):
         url, token = self._url, self._token
 
         def post() -> None:
-            req = urllib.request.Request(url + "/api/tx", data=json.dumps(payload).encode(), method="POST",
+            req = urllib.request.Request(normalize(url) + "/api/tx", data=json.dumps(payload).encode(), method="POST",
                                          headers={**self._headers(token), "Content-Type": "application/json"})
             try:
-                with urllib.request.urlopen(req, timeout=10):
+                with urllib.request.urlopen(req, timeout=10, context=_ANY_CERT):
                     self.tx_result.emit(True, "sent")
             except urllib.error.HTTPError as e:
                 try:
