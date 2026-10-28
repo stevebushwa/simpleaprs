@@ -45,7 +45,7 @@
   td .coords { color: var(--dim); font-size: 11px; }
   #find { width: 190px; }
   #bell.on { color: var(--accent); border-color: var(--accent); }
-  #cards { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 6; width: min(380px, calc(100% - 24px));
+  #cards { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6; width: min(380px, calc(100% - 24px));
            display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
   .card { pointer-events: auto; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-left: 4px solid var(--accent);
           border-radius: 8px; box-shadow: 0 6px 24px #0006; padding: 10px 12px; }
@@ -325,7 +325,7 @@
     if (stick) box.scrollTop = box.scrollHeight;
   };
 
-  // A message or bulletin that arrives: a card in the middle of the map and, with the bell on, a chime, a vibration and (if this
+  // A message or bulletin that arrives: a card at the top middle of the map and, with the bell on, a chime, a vibration and (if this
   // tab isn't the one in front) a notification through the browser. `seen` is the newest message this browser has already
   // shown, so ones that came in while it was shut or asleep still get a card when it reconnects, and the history on a first visit doesn't.
   let seen = Number(store.get("msgSeen")) || 0;
@@ -421,7 +421,7 @@
     box.append(mk("div", {className: "hint", textContent: "These apply to this browser only. A card on the map shows for each message that arrives; Alerts adds a chime, vibration and a notification."}),
       mk("div", {className: "fld"}, mk("label", {className: "t"}, master, " Alerts on")),
       mk("h3", {textContent: "When a message or bulletin arrives"}),
-      check("Show a card in the middle of the map", "card"),
+      check("Show a card at the top of the map", "card"),
       check("Play a chime", "chime", "Needs one tap on the page after it loads before the browser allows sound."),
       check("Vibrate", "vibrate", "vibrate" in navigator ? "" : "This browser can't vibrate."),
       check("Send a notification when this tab isn't in front", "notify"),

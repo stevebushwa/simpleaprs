@@ -133,7 +133,7 @@ first. It reaches the phone through an iGate that hears you. A reply comes back 
 if an iGate has heard you recently; the person replying should start with `@` and your callsign, since the service forgets who
 you texted when it restarts.
 
-**When a message arrives.** A card appears in the middle of the map for each message or bulletin that comes in (with Reply for a
+**When a message arrives.** A card appears at the top middle of the map for each message or bulletin that comes in (with Reply for a
 message), and stays until you dismiss it; one that arrived while the page was shut or the phone was asleep gets its card when the
 page reconnects. The Alerts button at the top turns on a chime, a vibration, and a notification through the browser when the
 page isn't the tab in front (remembered per browser). Settings > Notifications picks, for this browser, which of those happen,
