@@ -1,4 +1,5 @@
 import json
+import time
 import urllib.error
 import urllib.request
 
@@ -50,17 +51,18 @@ def post(srv, body, token=None):
 
 def test_replay_then_sync_then_live(make_server):
     hub, srv, _ = make_server()
-    hub.publish({"t": 1.0, "raw": "aa"})
-    hub.publish({"t": 2.0, "raw": "bb", "tx": True})
+    now = time.time()  # a backlog replays the last month of traffic: a test frame carries a time in it
+    hub.publish({"t": now, "raw": "aa"})
+    hub.publish({"t": now, "raw": "bb", "tx": True})
     got = events(srv, "secret", n=4)
     assert got[0]["hello"]["callsign"] == "N0CALL" and got[0]["hello"]["allow_tx"] is True
     assert [g.get("raw") for g in got[1:3]] == ["aa", "bb"] and got[3] == {"sync": True}
 
 
 def test_live_events_after_sync(make_server):
-    import threading, time
+    import threading
     hub, srv, _ = make_server()
-    threading.Timer(0.5, hub.publish, [{"t": 3.0, "raw": "cc"}]).start()
+    threading.Timer(0.5, hub.publish, [{"t": time.time(), "raw": "cc"}]).start()
     got = events(srv, "secret", n=3)  # hello, sync, live
     assert got[2]["raw"] == "cc"
 
@@ -191,11 +193,12 @@ def test_open_access_needs_no_token(open_server):
 
 def test_web_stream_intro_replay_and_live(open_server):
     srv, web, _ = open_server
-    web.hub.publish({"type": "packet", "t": 1.0, "text": "kept"})
+    now = time.time()  # the page is replayed the last month of traffic, so a packet carries its time
+    web.hub.publish({"type": "packet", "t": now, "text": "kept"})
     web.hub.publish({"type": "station", "call": "W1AW"}, keep=False)  # live only, the intro carries current state
     r = urllib.request.urlopen(url(srv, "/web/events"), timeout=5)
     got = [json.loads(line[6:]) for _, line in zip(range(3), (l for l in r if l.startswith(b"data: ")))]
-    assert got == [{"type": "me", "call": "N0CALL"}, {"type": "packet", "t": 1.0, "text": "kept"}, {"sync": True}]
+    assert got == [{"type": "me", "call": "N0CALL"}, {"type": "packet", "t": now, "text": "kept"}, {"sync": True}]
 
 
 def test_open_access_refuses_other_sites(open_server):

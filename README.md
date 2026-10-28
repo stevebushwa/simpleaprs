@@ -94,7 +94,9 @@ a message to `BLN#` with no message number, so nobody acks it; sending the same 
 desktop app has the same popup button and bulletin box. Bulletins heard on the air (to `BLN#`, with or without a group
 name) are listed in the Messages tab as `BLN1 from CALL: text`, once per sender and text since senders repeat them, with no
 ack and no alert sound. The "Show" menu at the top of the tab narrows the list to direct messages or bulletins (remembered
-between visits).
+between visits). The Raw packets tab keeps a line for every packet as it comes in, newest at the bottom, and its own "Show"
+menu picks how far back the list looks: the last hour, 6 or 12 hours, a day or a week. A packet drops out of that history
+once it is a month old; a message stays.
 
 **It is plain HTTP.** The login keeps other people on your network, and other web pages, out; it doesn't hide anything from
 someone who can watch the network, so keep the server on your LAN or a VPN such as Tailscale, never on the internet. As a

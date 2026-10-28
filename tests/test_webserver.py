@@ -1,6 +1,7 @@
 """The headless server over real HTTP: first-run setup, login, cookies, the desktop token, and settings."""
 import http.client
 import json
+import time
 
 import pytest
 
@@ -57,6 +58,23 @@ def call(s, method, path, body=None, cookie="", headers=None):
 
 def cookie_of(headers):
     return next(v for k, v in headers if k == "Set-Cookie").split(";")[0]
+
+
+def traffic(s, path, cookie=""):
+    """The traffic a stream replays to a new client, oldest first, up to its sync marker."""
+    c = http.client.HTTPConnection("127.0.0.1", s.share.port, timeout=5)
+    c.request("GET", path, headers={"Cookie": cookie} if cookie else {})
+    out = []
+    for line in c.getresponse():
+        if not line.startswith(b"data: "):
+            continue
+        ev = json.loads(line[6:])
+        if ev.get("sync"):
+            break
+        if "t" in ev:  # the rest of a stream (who this station is, the RX level) is state, not traffic
+            out.append(ev.get("raw") or ev.get("text"))
+    c.close()
+    return out
 
 
 def setup(s, **extra):
@@ -192,6 +210,19 @@ def test_the_event_stream_needs_a_session_and_ends_at_logout(srv):
     call(srv, "POST", "/api/logout", {}, cookie=cookie)
     r.read()  # the server hangs up within a second of the logout
     c.close()
+
+
+def test_a_page_and_a_client_see_the_last_month_of_traffic(srv):
+    """A month of traffic is as far back as a page, or a desktop app following this radio, can look.
+    A message is not traffic to be aged out this way: it is kept as long as it fits in the backlog."""
+    cookie, _ = setup(srv)
+    now, last_month = time.time(), time.time() - 31 * 24 * 86400  # a month and a day of traffic
+    for kind, t in (("packet", last_month), ("message", last_month), ("packet", now), ("message", now)):
+        srv.web_hub.publish({"type": kind, "t": t, "text": f"{kind} ({'last month' if t == last_month else 'now'})"})
+    srv.hub.publish({"t": last_month, "raw": "00"})  # the same traffic, as a desktop app follows it
+    srv.hub.publish({"t": now, "raw": "01"})
+    assert traffic(srv, "/web/events", cookie) == ["message (last month)", "packet (now)", "message (now)"]
+    assert traffic(srv, "/api/events", cookie) == ["01"]
 
 
 # --- settings -----------------------------------------------------------------------------------------

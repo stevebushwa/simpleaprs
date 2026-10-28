@@ -110,7 +110,12 @@
         <option>BLN5</option><option>BLN6</option><option>BLN7</option><option>BLN8</option><option>BLN9</option><option value="BLNX">BLNX (urgent)</option></select>
         <input id="btext" placeholder="Bulletin (max 67 chars)" maxlength="67"><button class="act" disabled>Send bulletin</button></form>
     </div>
-    <div class="tab col" id="packets" hidden><div class="log" id="pkts"></div></div>
+    <div class="tab col" id="packets" hidden>
+      <div class="bar"><label>Show <select id="pfilter"><option value="0">All packets</option><option value="3600">Last hour</option>
+        <option value="21600">Last 6 hours</option><option value="43200">Last 12 hours</option>
+        <option value="86400">Last day</option><option value="604800">Last week</option></select></label></div>
+      <div class="log" id="pkts"></div>
+    </div>
     <div class="tab" id="settings" hidden></div>
   </aside>
 </main>
@@ -181,6 +186,7 @@
     const d = document.createElement("div"), ts = document.createElement("span");
     ts.className = "t"; ts.textContent = new Date(t * 1000).toLocaleTimeString([], {hour12: false});
     d.append(ts, text);
+    d.dataset.t = t;  // what the line holds, and when: a filter can ask how old it is
     if (cls) d.className = cls;
     box.appendChild(d);
     while (box.childElementCount > 500) box.firstChild.remove();
@@ -326,6 +332,15 @@
   $("mfilter").onchange = e => { store.set("mfilter", e.target.value); showMsgs(e.target.value); };
   $("msgs").dataset.show = $("mfilter").value = ["all", "direct", "bulletin"].includes(store.get("mfilter")) ? store.get("mfilter") : "all";
 
+  // packets: the log holds the last month of what the server heard; the filter picks how far back to look
+  const showSpan = () => {
+    const secs = Number($("pfilter").value), cutoff = secs ? Date.now() / 1000 - secs : 0;
+    for (const d of $("pkts").children) d.hidden = cutoff && +d.dataset.t < cutoff;
+  };
+  $("pfilter").onchange = e => { store.set("pfilter", e.target.value); showSpan(); };
+  $("pfilter").value = store.get("pfilter") || "0"; showSpan();
+  setInterval(showSpan, 60000);  // on quiet air a packet can pass out of the window on its own
+
   // talking to the server
   let allowTx = false, centered = false, me = null;
   const setBusy = () => { for (const el of [$("beacon"), $("send").querySelector("button"), $("bulletin").querySelector("button")]) el.disabled = !allowTx; };
@@ -395,7 +410,7 @@
         break;
       case "station": onStation(ev); if (synced) logActivity(`Heard ${ev.call}`); break;
       case "gone": forget(ev.calls); break;
-      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); if (synced && ev.tx) logActivity("Transmitted a packet"); break;
+      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); showSpan(); if (synced && ev.tx) logActivity("Transmitted a packet"); break;
       case "message": addLine($("msgs"), ev.t, ev.text, ev.kind || "direct"); if (synced) logActivity(ev.text.length > 70 ? ev.text.slice(0, 70) + "..." : ev.text); break;
     }
   };
