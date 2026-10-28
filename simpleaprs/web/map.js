@@ -85,6 +85,7 @@ map.on("style.load", () => {  // setStyle drops sources, so add ours again each 
 });
 
 let shown = null;  // call whose route is on the map
+let directSegs = [];  // lines from your own station to each station heard straight from it, drawn when your own icon is clicked
 
 // Each click on a station steps it through: popup + route -> route only -> nothing.
 const clearStation = call => {
@@ -92,6 +93,13 @@ const clearStation = call => {
   m.state = null;
   m.pop.remove();
   if (shown === call) { shown = null; drawRoute([]); }
+};
+// Bring a station and everything its lines reach into view (never zooming in further than maxZoom).
+const fitTo = (m, segs, maxZoom) => {
+  const here = m.getLngLat(), box = new maplibregl.LngLatBounds(here, here);
+  for (const s of segs) for (const c of s.coords) box.extend(c);
+  if (segs.length) map.fitBounds(box, {padding: 70, maxZoom});
+  else map.flyTo({center: here, zoom: maxZoom});
 };
 const clickStation = call => {
   const m = markers[call];
@@ -101,8 +109,25 @@ const clickStation = call => {
   else {
     m.state = "popup"; shown = call;
     m.pop.setLngLat(m.getLngLat()).addTo(map);
-    drawRoute(m.routeSegs);
+    drawRoute(m.isMe ? directSegs : m.routeSegs);
+    if (m.isMe && directSegs.length) fitTo(m, directSegs, map.getZoom());  // the stations you hear may be off the screen: zoom out to them, never in
   }
+};
+// Show a station as a click on it would (popup and route), and bring it into view with its route.
+window.showStation = (call, zoom) => {
+  const m = markers[call];
+  if (!m) return;
+  if (shown && shown !== call) clearStation(shown);
+  shown = call;
+  if (m.state !== "popup") { m.state = "popup"; m.pop.setLngLat(m.getLngLat()).addTo(map); }
+  const segs = m.isMe ? directSegs : m.routeSegs;
+  drawRoute(segs);
+  fitTo(m, segs, zoom || map.getZoom());
+};
+// The stations your own station hears directly, as [lon, lat] points to draw lines to (the page works that out).
+window.setDirect = (from, tos) => {
+  directSegs = tos.map(to => ({dashed: false, coords: [from, to]}));
+  if (shown && markers[shown]?.isMe) drawRoute(directSegs);
 };
 // info: [[label, value], ...] shown when the marker is clicked; icon/cls pick the badge shape and colour
 window.setStation = (call, lat, lon, label, me, info, stale, icon, cls, segs, visible, trail) => {
@@ -112,7 +137,7 @@ window.setStation = (call, lat, lon, label, me, info, stale, icon, cls, segs, vi
     el.innerHTML = '<span class="ic"></span><b></b>';
     m = markers[call] = new maplibregl.Marker({element: el}).setLngLat([lon, lat]).addTo(map);
     m.pop = new maplibregl.Popup({offset: 16, closeButton: true});
-    // Closing the popup (its X, or a click on the map) leaves the route up.
+    // Closing the popup with its X leaves the route up; a click on the map clears both (see below).
     m.pop.on("close", () => { if (m.state === "popup") m.state = "route"; });
     el.addEventListener("click", ev => { ev.stopPropagation(); clickStation(call); });
   }
@@ -125,11 +150,12 @@ window.setStation = (call, lat, lon, label, me, info, stale, icon, cls, segs, vi
   m.setLngLat([lon, lat]);
   el.querySelector("b").textContent = label;
   m.pop.setDOMContent(popup(call, info, me));
+  m.isMe = !!me;
   m.routeSegs = segs || [];
   m.trail = trail || [];
   el.style.display = visible === false ? "none" : "";
   if (visible === false && m.state) clearStation(call);
-  if (shown === call) drawRoute(m.routeSegs);  // a hop's position may have just been learned
+  if (shown === call) drawRoute(m.isMe ? directSegs : m.routeSegs);  // a hop's position may have just been learned
   if (m.state === "popup") m.pop.setLngLat([lon, lat]);
   refresh();
 };
@@ -144,6 +170,8 @@ window.removeStations = calls => {
   }
   refresh();
 };
+// A click anywhere else on the map clears the route (and popup) being shown.
+map.on("click", () => { if (shown) clearStation(shown); });
 window.centerOn = (lat, lon, zoom) => map.flyTo({center: [lon, lat], zoom: zoom || map.getZoom()});
 
 // What the colours mean, and the one button that acts on them. Built here so the desktop window and the web page both get it.
@@ -152,7 +180,7 @@ legend.id = "legend";
 const rows = [
   ["dot", "#d33", "Station"], ["dot", "#1e6fe8", "Weather station"], ["dot", "#1f9d3a", "iGate"],
   ["dot", "#e08a00", "Digipeater"], ["dot", "#8a3ffc", "You (your radio)"], ["dot old", "#d33", "Not heard since start"],
-  ["line", "#1f9d3a", "Track of a moving station"], ["line", "#6a2fd6", "Route of the clicked station"],
+  ["line", "#1f9d3a", "Track of a moving station"], ["line", "#6a2fd6", "Route of the clicked station"], ["line", "#6a2fd6", "Heard directly (click your own)"],
   ["line dashed", "#6a2fd6", "Hop with no known position"]];
 legend.innerHTML = "<summary>Legend</summary>" + rows.map(([k, c, t]) => `<div><i class="${k}" style="--c:${c}"></i>${t}</div>`).join("");
 const clearOld = document.createElement("button");

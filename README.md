@@ -103,6 +103,14 @@ drops out once it is a month old) and messages for good, however many packets co
 tens of MB) so a restart doesn't empty the page. They are written ten events at a time (a message at once; everything when the
 server stops, or every 30 seconds) and rewritten smaller when a file passes 2 MB, which also drops what has aged out.
 
+**Searching and the map.** The Raw packets tab has a search box that narrows the lines to those containing what you type (the
+callsign, a word, a time); it looks within the span the Show menu picks, so choose a longer one to search further back. The box
+at the top of the page finds a station by callsign, or a word from its comment, and shows it on the map with its route. Click
+any station on the map, or its row in the list, and its popup and route are drawn; click your own icon and lines are drawn to
+every station you hear directly, with no digipeater between (judged by each station's last packet), and listed in your popup.
+A click anywhere else on the map clears whatever is drawn. In the Stations list, click Station, Heard or Distance to sort by
+callsign, when it was last heard or how far it is from you (miles), and click again to turn the order round.
+
 **What a station says about itself.** Click a station on the map or in the list and its popup shows what its last position
 packet says beyond where it is: transmit power, antenna height, gain and direction (from `PHG`), range (`RNG`), signal strength
 (`DFS`), speed and course (also from Mic-E), altitude (`/A=`), a frequency with its tone and offset, and, written out in the

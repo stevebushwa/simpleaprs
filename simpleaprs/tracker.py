@@ -109,7 +109,12 @@ class Tracker:
         return {"type": "station", "call": call, "lat": p.lat, "lon": p.lon, "icon": icon, "cls": cls,
                 "kinds": sorted(aprs.kinds(p.symbol, bool(wx), roles)), "info": info, "segs": segs,
                 "trail": trails.line(self.trails.get(call, [])), "temp": wx.get("Temp", ""), "heard": self.heard.get(call, 0), "stale": call not in self.live,
-                "note": self.note.get(call, "")}
+                "note": self.note.get(call, ""), "direct": self.is_direct(call)}
+
+    def is_direct(self, call: str) -> bool:
+        """Was its last packet heard straight from it, with no digipeater between? (An object came from somewhere else.)"""
+        p = self.stations[call]
+        return not p.obj and not any(a.repeated for a in p.frame.path)
 
     def intro(self, allow_tx: bool) -> list[dict]:
         """What a web client needs before it can follow along: who we are and every station we know."""

@@ -135,3 +135,13 @@ def test_stations_survive_a_restart_as_stale(rig):
     st = again.intro(True)[1]
     assert (st["call"], st["stale"], st["heard"]) == ("W1AW-9", True, 100.0)
     assert json.loads((tmp / "stations.json").read_text())["stations"][0]["heard"] == 100.0
+
+
+def test_a_station_is_direct_when_no_digipeater_repeated_its_packet(rig):
+    t, events, _, _ = rig
+    t.on_frame(position("W1AW-9", path="WIDE1-1,WIDE2-1"))  # asks to be repeated, but nobody has yet
+    t.on_frame(position("K1ABC", path="K5WH-2*,WIDE2-1"))  # K5WH-2 repeated it
+    obj = aprs.make_frame("W1AW-9", b";WX1OBJ   *111111z" + aprs.build_position(41.7, -72.7, "/_", "")[1:], "WIDE1-1").encode()
+    t.on_frame(obj)  # an object is somewhere else; whoever sent it is not what is plotted
+    direct = {e["call"]: e["direct"] for e, _ in events if e["type"] == "station"}
+    assert direct == {"W1AW-9": True, "K1ABC": False, "WX1OBJ": False}

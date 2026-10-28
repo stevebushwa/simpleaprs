@@ -39,6 +39,12 @@
   th { position: sticky; top: 0; background: var(--bar); text-align: left; font-weight: 600; color: var(--dim); }
   th, td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
   td:last-child { word-break: break-word; }
+  th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+  th[data-sort]:hover { color: var(--fg); }
+  th[data-sort]::after { content: attr(data-arrow); }
+  td .coords { color: var(--dim); font-size: 11px; }
+  #find { width: 190px; }
+  #psearch { width: 170px; margin-left: 10px; padding: 3px 8px; }
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: var(--bar); }
   tr.old { color: var(--dim); }
@@ -90,6 +96,8 @@
   <div class="row">
     <span class="dot" id="conn"></span><h1 id="title">simpleaprs</h1>
     <span class="grow"></span>
+    <input id="find" type="search" list="finds" placeholder="Find a station" title="A callsign, or a word from its comment: Enter shows it on the map with its route" autocomplete="off">
+    <datalist id="finds"></datalist>
     <label>Show <select id="filter">
       <option value="all">All stations</option><option value="weather">Weather stations</option><option value="igate">iGates</option>
       <option value="digi">Digipeaters</option><option value="mobile">Mobile (vehicles, aircraft, boats)</option></select></label>
@@ -108,7 +116,7 @@
   <div id="mapbox"><div id="map"></div><div id="msg"></div></div>
   <aside>
     <nav><button data-tab="stations" class="on">Stations</button><button data-tab="messages">Messages</button><button data-tab="packets">Raw packets</button><button data-tab="settings">Settings</button></nav>
-    <div class="tab" id="stations"><table><thead><tr><th>Station</th><th>Heard</th><th>Position</th><th>Comment</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="tab" id="stations"><table><thead><tr><th data-sort="call" title="Sort by callsign">Station</th><th data-sort="heard" title="Sort by when last heard">Heard</th><th data-sort="dist" title="Sort by distance from you">Distance</th><th>Comment</th></tr></thead><tbody id="rows"></tbody></table></div>
     <div class="tab col" id="messages" hidden>
       <div class="bar"><label>Show <select id="mfilter"><option value="all">All messages</option><option value="direct">Direct messages</option><option value="bulletin">Bulletins</option></select></label></div>
       <div class="log" id="msgs"></div>
@@ -124,7 +132,7 @@
       <div class="bar"><label>Show <select id="pfilter"><option value="3600">Last hour</option>
         <option value="21600">Last 6 hours</option><option value="43200">Last 12 hours</option>
         <option value="86400">Last day</option><option value="604800">Last week</option><option value="0">All (a month)</option></select></label>
-        <span id="pstatus"></span></div>
+        <input id="psearch" type="search" placeholder="Search packets" autocomplete="off"><span id="pstatus"></span></div>
       <div class="log" id="pkts"></div>
     </div>
     <div class="tab" id="settings" hidden></div>
@@ -171,24 +179,87 @@
     onMap("setStation", call, ev.lat, ev.lon, label, false, info, ev.stale, ev.icon, ev.cls, ev.segs, visible(ev), ev.trail);
   };
   const forget = calls => {
-    for (const c of calls) { stations[c]?.tr.remove(); delete stations[c]; }
+    for (const c of calls) { stations[c]?.tr.remove(); stations[c]?.opt.remove(); delete stations[c]; }
     onMap("removeStations", calls);
+    showDirectSoon();
   };
   $("filter").onchange = e => { filter = e.target.value; store.set("filter", filter); Object.keys(stations).forEach(plot); };
+  // distance from your own station, in miles (null until it has a position)
+  const miles = (lat, lon) => {
+    if (!me || !(me.lat || me.lon)) return null;
+    const r = x => x * Math.PI / 180, a = Math.sin(r(lat - me.lat) / 2) ** 2 + Math.cos(r(me.lat)) * Math.cos(r(lat)) * Math.sin(r(lon - me.lon) / 2) ** 2;
+    return 3958.8 * 2 * Math.asin(Math.sqrt(a));
+  };
+  const setPlace = s => {
+    s.dist = miles(s.ev.lat, s.ev.lon);
+    s.tr.children[2].firstChild.textContent = s.dist === null ? "" : s.dist < 10 ? s.dist.toFixed(1) + " mi" : Math.round(s.dist) + " mi";
+    s.tr.children[2].lastChild.textContent = `${s.ev.lat.toFixed(4)}, ${s.ev.lon.toFixed(4)}`;
+  };
+  // The list's order: click a heading to sort by it, again to turn it round. Sorting waits while the pointer is over the list
+  // (rows would move under it) and happens in one go, since a backlog arrives as thousands of events.
+  const SORTS = ["call", "heard", "dist"];
+  let sortBy = SORTS.includes(store.get("sortBy")) ? store.get("sortBy") : "heard", sortDir = store.get("sortDir") === "-1" ? -1 : 1;  // 1: A to Z, newest, nearest
+  const compare = {call: (a, b) => a.ev.call.localeCompare(b.ev.call, undefined, {numeric: true}), heard: (a, b) => b.ev.heard - a.ev.heard, dist: (a, b) => a.dist - b.dist};
+  let sortTimer = 0, sortLate = false;
+  const sortRows = () => {
+    sortLate = false;
+    const all = Object.values(stations), known = all.filter(s => sortBy !== "dist" || s.dist !== null);
+    known.sort((a, b) => sortDir * compare[sortBy](a, b));
+    $("rows").append(...known.map(s => s.tr), ...all.filter(s => !known.includes(s)).map(s => s.tr));  // no distance: last, whichever way
+    for (const th of document.querySelectorAll("th[data-sort]"))
+      th.dataset.arrow = th.dataset.sort === sortBy ? (sortDir === 1 ? " \u25B2" : " \u25BC") : "";
+  };
+  const sortSoon = () => {
+    clearTimeout(sortTimer);
+    sortTimer = setTimeout(() => { if ($("rows").matches(":hover")) sortLate = true; else sortRows(); }, 800);
+  };
+  $("rows").onmouseleave = () => { if (sortLate) sortRows(); };
+  for (const th of document.querySelectorAll("th[data-sort]")) th.onclick = () => {
+    sortDir = th.dataset.sort === sortBy ? -sortDir : 1; sortBy = th.dataset.sort;
+    store.set("sortBy", sortBy); store.set("sortDir", String(sortDir)); sortRows();
+  };
   const onStation = ev => {
     let s = stations[ev.call];
     if (!s) {
       const tr = document.createElement("tr");
       for (let i = 0; i < 4; i++) tr.appendChild(document.createElement("td"));
       tr.children[0].textContent = ev.call;
-      tr.children[2].textContent = `${ev.lat.toFixed(4)}, ${ev.lon.toFixed(4)}`;
-      tr.onclick = () => onMap("centerOn", stations[ev.call].ev.lat, stations[ev.call].ev.lon, 12);
+      tr.children[2].append(document.createElement("div"), mk("div", {className: "coords"}));
+      tr.onclick = () => onMap("showStation", ev.call, 12);  // as if its icon had been clicked: popup and route
       $("rows").appendChild(tr);
-      s = stations[ev.call] = {tr};
+      s = stations[ev.call] = {tr, opt: mk("option", {value: ev.call})};
+      $("finds").appendChild(s.opt);
     }
+    const was = s.ev;
     s.ev = ev;
-    s.tr.children[2].textContent = `${ev.lat.toFixed(4)}, ${ev.lon.toFixed(4)}`;
+    s.opt.label = ev.note.slice(0, 60);
+    setPlace(s);
     plot(ev.call);
+    sortSoon();
+    if (!was || was.direct !== ev.direct || was.lat !== ev.lat || was.lon !== ev.lon) showDirectSoon();
+  };
+
+  // Your own icon: who you hear straight from, with no digipeater between (a station's last packet decides)
+  let directTimer = 0;
+  const showDirectSoon = () => { clearTimeout(directTimer); directTimer = setTimeout(showDirect, 400); };
+  const showDirect = () => {
+    if (!me || !(me.lat || me.lon)) return;
+    const near = Object.values(stations).filter(s => s.ev.direct).sort((a, b) => a.dist - b.dist);
+    const names = near.slice(0, 12).map(s => s.ev.call).join(", ") + (near.length > 12 ? ` and ${near.length - 12} more` : "");
+    onMap("setStation", me.call, me.lat, me.lon, me.call, true, [...me.info, ["Heard directly", near.length ? `${near.length}: ${names}` : "no one yet"]], false, me.icon, "me");
+    onMap("setDirect", [me.lon, me.lat], near.map(s => [s.ev.lon, s.ev.lat]));
+  };
+
+  // Find a station by callsign (or a word from its comment) and show it on the map
+  $("find").onchange = e => {
+    const q = e.target.value.trim().toLowerCase();
+    if (!q) return;
+    const all = Object.values(stations), call = s => s.ev.call.toLowerCase();
+    const hit = all.find(s => call(s) === q) || all.find(s => call(s).startsWith(q)) || all.find(s => call(s).includes(q)) || all.find(s => s.ev.note.toLowerCase().includes(q));
+    if (!hit) return say(`No station matches "${e.target.value.trim()}"`);
+    if (!visible(hit.ev)) { filter = "all"; $("filter").value = filter; store.set("filter", filter); Object.keys(stations).forEach(plot); }  // hidden by the Show menu
+    onMap("showStation", hit.ev.call, 12);
+    e.target.blur();
   };
 
   // logs
@@ -385,12 +456,15 @@
   // anything older than it has (up to a month) when the choice reaches past what is loaded
   const MONTH = 30 * 86400, PKT_SHOWS = ["0", "3600", "21600", "43200", "86400", "604800"], PAGE = 1000;
   let covered = 0, loading = false, epoch = 0;  // covered: the list is complete back to this time (0: all of it); epoch changes with every connection, so a late reply can tell it is stale
+  let query = "", matches = 0;  // the search text (lower case), and how many lines it and the span leave
   const inSpan = d => { const secs = Number($("pfilter").value); return !secs || +d.dataset.t >= Date.now() / 1000 - secs; };
+  const wanted = d => inSpan(d) && (!query || d.textContent.toLowerCase().includes(query));
   const showSpan = (all = true) => {
     const box = $("pkts");
     while (box.firstChild && +box.firstChild.dataset.t < Date.now() / 1000 - MONTH) box.firstChild.remove();
-    if (all) for (const d of box.children) d.hidden = !inSpan(d);
-    else if (box.lastChild) box.lastChild.hidden = !inSpan(box.lastChild);  // a new line: only it needs asking
+    if (all) { matches = 0; for (const d of box.children) { d.hidden = !wanted(d); matches += !d.hidden; } }
+    else if (box.lastChild) { box.lastChild.hidden = !wanted(box.lastChild); matches += !box.lastChild.hidden; }  // a new line: only it needs asking
+    if (!loading) $("pstatus").textContent = query ? `${matches} match${matches === 1 ? "" : "es"}` : "";
   };
   const reach = async () => {  // load older packets until the filter's span is covered, or there are no more
     if (loading) return;
@@ -411,9 +485,14 @@
         covered = d.more && d.events.length ? d.events[0].t : 0;
         showSpan();
       }
-      $("pstatus").textContent = "";
+      loading = false; showSpan();
     } catch { if (mine === epoch) $("pstatus").textContent = "Couldn't load older packets"; }
     finally { if (mine === epoch) loading = false; }
+  };
+  let searchTimer = 0;
+  $("psearch").oninput = e => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { query = e.target.value.trim().toLowerCase(); showSpan(); $("pkts").scrollTop = $("pkts").scrollHeight; }, 150);
   };
   $("pfilter").onchange = e => { store.set("pfilter", e.target.value); showSpan(); reach().then(() => { $("pkts").scrollTop = $("pkts").scrollHeight; }); };
   $("pfilter").value = PKT_SHOWS.includes(store.get("pfilter")) ? store.get("pfilter") : "86400";
@@ -485,6 +564,7 @@
         setBusy(); idle();
         if (ev.lat || ev.lon) {
           onMap("setStation", ev.call, ev.lat, ev.lon, ev.call, true, ev.info, false, ev.icon, "me");
+          Object.values(stations).forEach(setPlace); sortSoon(); showDirectSoon();  // distances are from here
           if (!centered) { centered = true; onMap("centerOn", ev.lat, ev.lon, 9); }
         }
         break;
