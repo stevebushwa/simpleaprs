@@ -4,6 +4,7 @@ With an Auth, the page and everything behind it needs a login (a session cookie)
 after that /login asks for it. Without one the page is open. An app subclasses BaseWebUI and fills in:
 
   intro()           the events a page needs to draw itself from nothing
+  replay            how far back (seconds) the traffic a page is sent on connecting goes; hub.older() serves the rest
   get(h, path)      its own GET routes, after the login check (True if it answered)
   post(h)           its own POST routes that decide for themselves about login (True if it answered)
   private_posts     {path: handler(h)} for POST routes that need a login (json_route() makes a handler)
@@ -24,6 +25,7 @@ class BaseWebUI:
     cookie_name = "session"  # servers on one address need names of their own, or each login would end the others'
     app_name = "app"         # shown on the login page
     index = "index.html"     # the page itself, served at /
+    replay: float | None = None  # seconds of traffic a page is sent when it connects (None: all); the rest is fetched on demand
 
     def __init__(self, hub: Hub, proxy: MapProxy, auth: Auth | None = None) -> None:
         self.hub, self.proxy, self.auth = hub, proxy, auth

@@ -95,8 +95,39 @@ desktop app has the same popup button and bulletin box. Bulletins heard on the a
 name) are listed in the Messages tab as `BLN1 from CALL: text`, once per sender and text since senders repeat them, with no
 ack and no alert sound. The "Show" menu at the top of the tab narrows the list to direct messages or bulletins (remembered
 between visits). The Raw packets tab keeps a line for every packet as it comes in, newest at the bottom, and its own "Show"
-menu picks how far back the list looks: the last hour, 6 or 12 hours, a day or a week. A packet drops out of that history
-once it is a month old; a message stays.
+menu picks how far back the list looks: the last hour, 6 or 12 hours, a day (the default), a week, or all of it. Every line carries
+its date and time. A page is sent the last day of packets when it connects; when the menu reaches further back than that, it
+asks the server for the rest as needed, so a long history doesn't slow the page down. The server keeps a month of packets (one
+drops out once it is a month old) and messages for good, however many packets come after them. Both are saved in
+`~/.config/simpleaprs` (`web-events.jsonl` and `frames.jsonl`; a packet takes about 150 to 250 bytes, so a busy month can run to
+tens of MB) so a restart doesn't empty the page. They are written ten events at a time (a message at once; everything when the
+server stops, or every 30 seconds) and rewritten smaller when a file passes 2 MB, which also drops what has aged out.
+
+**What a station says about itself.** Click a station on the map or in the list and its popup shows what its last position
+packet says beyond where it is: transmit power, antenna height, gain and direction (from `PHG`), range (`RNG`), signal strength
+(`DFS`), speed and course (also from Mic-E), altitude (`/A=`), a frequency with its tone and offset, and, written out in the
+comment, power ("25W"), gain ("6dBi"), height ("40ft AGL", "antenna 12m"), battery voltage ("13.8V"), an email address or a web
+address. A code on the packet wins over the same thing written in words, and a number that is only likely to be one of these
+("2m", "5V" in a callsign) is left alone.
+
+**Sending a text message.** Messages tab: pick Message, give "To callsign" and the text (up to 67 characters), Send. The button
+stays grey until there is something to send, and it says which kind it is: switching the first menu to Bulletin changes the
+form (a coloured top edge, a bulletin number instead of a callsign, "Send bulletin") and asks you to confirm before it goes to
+everyone, then returns to Message. A message goes out through the radio with a number, once (nothing resends it), and a station
+that gets it answers with an ack, which you'll see as a packet in the Raw packets tab. Anyone in radio range, or reached by a
+digipeater on your path, can receive it; past that it needs an iGate that hears you to pass it on to the internet, and the
+person at the other end to be on the internet or in range of an iGate of their own. Transmitting needs your amateur license.
+
+To send an SMS to a phone, address the message to `SMS` and start the text with `@` and the 10-digit number (no leading 1):
+`@9876543210 No cell coverage. Get me on the radio!` (the 67 characters cover the number too). The service is run by volunteers
+(see aprs.wiki), covers the US, Canada, Australia and the UK, and asks the person who will receive texts to opt in on its site
+first. It reaches the phone through an iGate that hears you. A reply comes back to your callsign, and only reaches your radio
+if an iGate has heard you recently; the person replying should start with `@` and your callsign, since the service forgets who
+you texted when it restarts.
+
+**Conversations.** Direct messages are kept in a folder for whoever they are with, newest conversation last, closed until you
+open it (a bold name means something new arrived while it was closed). Opening one addresses the reply form to that station.
+Bulletins stay in the list between the folders.
 
 **It is plain HTTP.** The login keeps other people on your network, and other web pages, out; it doesn't hide anything from
 someone who can watch the network, so keep the server on your LAN or a VPN such as Tailscale, never on the internet. As a

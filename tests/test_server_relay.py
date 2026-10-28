@@ -6,6 +6,7 @@ from piwebkit.auth import Auth
 from simpleaprs.ax25 import Frame
 from simpleaprs.config import Config
 from simpleaprs.digipeater import Digipeater
+from simpleaprs import headless
 from simpleaprs.headless import Server
 
 ME = "N0CALL-7"
@@ -88,7 +89,9 @@ def test_igate_message_for_rf_is_sent_as_relay_and_stop_silences_it():
     assert len(s.radio.sent) == 1
 
 
-def test_igate_without_passcode_waits_instead_of_exiting():
+def test_igate_without_passcode_waits_instead_of_exiting(tmp_path, monkeypatch):
+    monkeypatch.setattr(headless, "WEB_EVENTS_PATH", tmp_path / "web-events.jsonl")
+    monkeypatch.setattr(headless, "FRAMES_PATH", tmp_path / "frames.jsonl")
     s = server(igate_enabled=True, share_port=0)
     s.auth = Auth(Path("/nonexistent/auth.json"))
     s.radio.start = lambda *a: True

@@ -18,7 +18,7 @@ from . import webconfig
 from piwebkit.auth import Auth
 from piwebkit.hub import Hub
 from piwebkit.server import lan_ip
-from .config import AUTH_PATH, PATH, STATIONS_PATH, Config
+from .config import AUTH_PATH, FRAMES_PATH, PATH, STATIONS_PATH, WEB_EVENTS_PATH, Config
 from .digipeater import Digipeater
 from .igate import IGate, passcode
 from .mapserver import MapProxy, tile_cache
@@ -160,6 +160,8 @@ class Server:
     def start(self) -> bool:
         c = self.cfg
         self.tracker.load()
+        self.web_hub.load(WEB_EVENTS_PATH)
+        self.hub.load(FRAMES_PATH)
         cache = tile_cache(c.map_cache_mb) if c.map_cache else None
         self.web = WebUI(self.web_hub, self.tracker, MapProxy(c.nomad_url, cache), c.share_allow_tx, self.auth, self)
         try:  # desktop apps follow with the access token; the web page has its login
@@ -304,6 +306,8 @@ class Server:
         if now >= self.next_save:
             self.next_save = now + 30
             self.tracker.save()
+            self.hub.flush()
+            self.web_hub.flush()
         if now >= self.next_rx_report:
             self.next_rx_report = now + 60
             self._rx_report()
@@ -329,6 +333,8 @@ class Server:
         self.stopping = True
         self._stop_gateways()
         self.tracker.save()
+        self.hub.flush()
+        self.web_hub.flush()
         self.radio.stop()
         if self.share:
             self.share.stop()

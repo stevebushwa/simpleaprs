@@ -52,7 +52,7 @@ def test_message_for_us_is_shown_and_acked(rig):
     t, events, replies, _ = rig
     t.on_frame(frame("W1AW-9", aprs.build_message(ME, "hi there", "12"), ""), 50.0)
     msgs = [ev for ev, _ in events if ev["type"] == "message"]
-    assert msgs == [{"type": "message", "kind": "direct", "t": 50.0, "text": "W1AW-9: hi there"}]
+    assert msgs == [{"type": "message", "kind": "direct", "t": 50.0, "text": "W1AW-9: hi there", "peer": "W1AW-9"}]  # peer: whose folder it goes in
     assert replies == [aprs.build_message("W1AW-9", "ack12")]
 
 
@@ -98,13 +98,13 @@ def test_tx_shows_packet_and_own_messages_but_not_acks(rig):
     t.on_tx(frame(ME, aprs.build_message("W1AW-9", "hello", "7")), 10.0)
     t.on_tx(frame(ME, aprs.build_message("W1AW-9", "ack3")), 11.0)
     assert [(ev["type"], ev.get("tx")) for ev, _ in events] == [("packet", True), ("message", None), ("packet", True)]
-    assert events[1][0]["text"] == "me -> W1AW-9: hello"
+    assert events[1][0]["text"] == "me -> W1AW-9: hello" and events[1][0]["peer"] == "W1AW-9"
 
 
 def test_tx_bulletin_shows_in_messages(rig):
     t, events, _, _ = rig
     t.on_tx(frame(ME, aprs.build_message("BLN1", "net at 8")), 10.0)
-    assert events[1][0] == {"type": "message", "kind": "bulletin", "t": 10.0, "text": "me -> BLN1: net at 8"}
+    assert events[1][0] == {"type": "message", "kind": "bulletin", "t": 10.0, "text": "me -> BLN1: net at 8"}  # a bulletin is with nobody
 
 
 def test_received_bulletin_is_logged_once_per_text(rig):

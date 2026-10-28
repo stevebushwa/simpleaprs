@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import aprs, trails
+from . import aprs, details, trails
 from .ax25 import Frame
 from .config import Config
 
@@ -100,7 +100,7 @@ class Tracker:
         icon, cls, kind = aprs.classify(p.symbol, bool(wx), roles)
         info = [["Position", f"{p.lat:.5f}, {p.lon:.5f}"], ["Type", kind], ["Symbol", p.symbol], ["Comment", p.comment],
                 ["Via", ",".join(str(a) for a in p.frame.path)], ["Sent by", str(p.frame.src) if p.obj else ""],
-                *[[k, v] for k, v in wx.items()]]
+                *[[k, v] for k, v in details.extract(p)], *[[k, v] for k, v in wx.items()]]
         segs: list[dict] = []
         if not p.obj:  # an object's path is its sender's, not its own
             segs, hops = aprs.route(p.frame, self._pos, self._me())
@@ -122,8 +122,9 @@ class Tracker:
     def _packet(self, t: float, text: str, tx: bool = False) -> None:
         self.emit({"type": "packet", "t": t, "text": text, "tx": tx})
 
-    def _message(self, t: float, text: str, kind: str = "direct") -> None:
-        self.emit({"type": "message", "kind": kind, "t": t, "text": text})
+    def _message(self, t: float, text: str, kind: str = "direct", peer: str = "") -> None:
+        """peer: who a direct message is with (it was from them or to them), so a page can keep a conversation together."""
+        self.emit({"type": "message", "kind": kind, "t": t, "text": text, **({"peer": peer} if peer else {})})
 
     # --- traffic --------------------------------------------------------------------------------------
 
@@ -192,7 +193,8 @@ class Tracker:
         self._packet(now, f"TX {frame}" + ("   (relayed)" if relay else ""), tx=True)
         p = aprs.parse(frame)
         if p.kind == "message" and not p.text.startswith("ack") and not relay:
-            self._message(now, f"me -> {p.to}: {p.text}", "bulletin" if aprs.is_bulletin(p.to) else "direct")
+            bulletin = aprs.is_bulletin(p.to)
+            self._message(now, f"me -> {p.to}: {p.text}", "bulletin" if bulletin else "direct", "" if bulletin else p.to)
 
     def _on_message(self, p: aprs.Packet, now: float, via: str = "") -> None:
         if aprs.is_bulletin(p.to):
@@ -202,7 +204,7 @@ class Tracker:
             return
         if p.to != self.cfg.callsign:
             return
-        self._message(now, f"{p.source}: {p.text}" + (f"   (via iGate {via})" if via else ""))
+        self._message(now, f"{p.source}: {p.text}" + (f"   (via iGate {via})" if via else ""), peer=p.source)
         if p.msg_id:
             self.reply(aprs.build_message(p.source, f"ack{p.msg_id}"))
 

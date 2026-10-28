@@ -32,6 +32,8 @@ class FakeRadio:
 def srv(tmp_path, monkeypatch):
     monkeypatch.setattr("simpleaprs.config.PATH", tmp_path / "config.json")
     monkeypatch.setattr(headless, "STATIONS_PATH", tmp_path / "stations.json")
+    monkeypatch.setattr(headless, "WEB_EVENTS_PATH", tmp_path / "web-events.jsonl")
+    monkeypatch.setattr(headless, "FRAMES_PATH", tmp_path / "frames.jsonl")
     monkeypatch.setattr(headless, "device_names", lambda inputs: ["USB Audio", "Built-in"] if inputs else ["USB Audio"])
     monkeypatch.setattr(headless, "find_device", lambda name, inputs: name)
     s = headless.Server(Config(callsign="N0CALL-7", lat=30.0, lon=-97.0, share_port=0), quiet=True, auth=Auth(tmp_path / "auth.json"))
@@ -216,13 +218,28 @@ def test_a_page_and_a_client_see_the_last_month_of_traffic(srv):
     """A month of traffic is as far back as a page, or a desktop app following this radio, can look.
     A message is not traffic to be aged out this way: it is kept as long as it fits in the backlog."""
     cookie, _ = setup(srv)
-    now, last_month = time.time(), time.time() - 31 * 24 * 86400  # a month and a day of traffic
+    now, last_month = time.time(), time.time() - 31 * 86400  # a month and a day of traffic
     for kind, t in (("packet", last_month), ("message", last_month), ("packet", now), ("message", now)):
         srv.web_hub.publish({"type": kind, "t": t, "text": f"{kind} ({'last month' if t == last_month else 'now'})"})
     srv.hub.publish({"t": last_month, "raw": "00"})  # the same traffic, as a desktop app follows it
     srv.hub.publish({"t": now, "raw": "01"})
     assert traffic(srv, "/web/events", cookie) == ["message (last month)", "packet (now)", "message (now)"]
     assert traffic(srv, "/api/events", cookie) == ["01"]
+
+
+def test_a_page_is_sent_the_last_day_and_asks_for_older_packets(srv):
+    cookie, _ = setup(srv)
+    now = time.time()
+    for days in (20, 3, 0.2):
+        srv.web_hub.publish({"type": "packet", "t": now - days * 86400, "text": f"{days} days ago"})
+    srv.web_hub.publish({"type": "message", "t": now - 25 * 86400, "text": "a message"})
+    assert traffic(srv, "/web/events", cookie) == ["0.2 days ago", "a message"]  # a message is not held to the window the packets are
+    st, data, _ = call(srv, "GET", f"/web/history?before={now - 86400}&limit=1", cookie=cookie)
+    assert st == 200 and [e["text"] for e in data["events"]] == ["3 days ago"] and data["more"] is True
+    st, data, _ = call(srv, "GET", f"/web/history?before={now - 4 * 86400}&limit=5", cookie=cookie)
+    assert [e["text"] for e in data["events"]] == ["20 days ago"] and data["more"] is False
+    assert call(srv, "GET", "/web/history?before=nope", cookie=cookie)[0] == 400
+    assert call(srv, "GET", f"/web/history?before={now}")[0] == 401  # and it needs the login like the rest
 
 
 # --- settings -----------------------------------------------------------------------------------------
@@ -299,6 +316,8 @@ def test_allow_tx_applies_live(srv):
 def test_an_unconfigured_server_runs_and_will_not_transmit(tmp_path, monkeypatch):
     monkeypatch.setattr("simpleaprs.config.PATH", tmp_path / "config.json")
     monkeypatch.setattr(headless, "STATIONS_PATH", tmp_path / "stations.json")
+    monkeypatch.setattr(headless, "WEB_EVENTS_PATH", tmp_path / "web-events.jsonl")
+    monkeypatch.setattr(headless, "FRAMES_PATH", tmp_path / "frames.jsonl")
     s = headless.Server(Config(share_port=0), quiet=True, auth=Auth(tmp_path / "auth.json"))
     s.radio = FakeRadio()
     try:

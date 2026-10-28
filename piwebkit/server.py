@@ -13,6 +13,7 @@ import queue
 import secrets
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 from urllib.parse import urlparse
@@ -121,12 +122,14 @@ class WebServer:
                     return True
                 return False
 
-            def stream(self, hub: Hub, intro: Callable[[], list[dict]], alive: Callable[[], bool] = lambda: True) -> None:
-                """Server-Sent Events: intro() first, then hub's replay, a sync marker, then live events.
-                The stream ends when alive() says no (the viewer logged out)."""
+            def stream(self, hub: Hub, intro: Callable[[], list[dict]], alive: Callable[[], bool] = lambda: True,
+                       replay: float | None = None) -> None:
+                """Server-Sent Events: intro() first, then hub's replay (the last `replay` seconds of traffic, or all
+                of it), a sync marker, then live events. The stream ends when alive() says no (the viewer logged out)."""
                 if hub.count() >= MAX_CLIENTS:
                     return self.reply(503, {"error": "too many clients"})
-                q, backlog = hub.subscribe()
+                since = time.time() - replay if replay is not None else None  # the replay and the page's "older" start from the same moment
+                q, backlog = hub.subscribe(since)
                 try:
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
@@ -136,7 +139,7 @@ class WebServer:
                         self.send_event(ev)
                     for ev in backlog:
                         self.send_event(ev)
-                    self.send_event({"sync": True})
+                    self.send_event({"sync": True, **({"since": since} if since is not None else {})})
                     idle = 0
                     while not outer.stopped and hub.subscribed(q) and alive():
                         try:
@@ -167,7 +170,7 @@ class WebServer:
                     elif self.path == "/web/events" and web:
                         if not web.session_ok(self):
                             return self.reply(401, {"error": "login required"})
-                        self.stream(web.hub, web.intro, lambda: web.session_ok(self))
+                        self.stream(web.hub, web.intro, lambda: web.session_ok(self), getattr(web, "replay", None))
                     elif web and web.handle(self):
                         pass
                     elif self.path == "/" and outer.banner:

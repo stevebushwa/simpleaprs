@@ -59,6 +59,89 @@ def test_replay_then_sync_then_live(make_server):
     assert [g.get("raw") for g in got[1:3]] == ["aa", "bb"] and got[3] == {"sync": True}
 
 
+def test_packets_age_out_after_a_month_but_messages_stay(monkeypatch):
+    from piwebkit import hub as hubmod
+    clock = [time.time()]
+    monkeypatch.setattr(hubmod.time, "time", lambda: clock[0])
+    hub, start = Hub(), clock[0]
+    hub.publish({"type": "message", "t": start, "text": "first"})
+    for i in range(5000):  # no count limit: a quiet month and a busy one are kept the same
+        hub.publish({"type": "packet", "t": start, "text": str(i)})
+    assert len(hub.subscribe()[1]) == 5001
+    clock[0] = start + hubmod.MONTH - 1
+    assert len(hub.subscribe()[1]) == 5001
+    clock[0] = start + hubmod.MONTH + 1
+    assert [e["text"] for e in hub.subscribe()[1]] == ["first"]
+
+
+def test_a_replay_window_sends_recent_traffic_and_older_comes_on_request():
+    hub, now = Hub(), time.time()
+    hub.publish({"type": "message", "t": now - 20 * 86400, "text": "old message"})
+    for i, days in enumerate((10, 5, 2, 0.5, 0.1)):
+        hub.publish({"type": "packet", "t": now - days * 86400, "text": f"p{i}"})
+    assert [e["text"] for e in hub.subscribe(since=now - 86400)[1]] == ["old message", "p3", "p4"]  # messages always come
+    assert len(hub.subscribe()[1]) == 6  # no window: everything
+    got, more = hub.older(now - 86400, 2)
+    assert [e["text"] for e in got] == ["p1", "p2"] and more is True  # the two just before, oldest first
+    got, more = hub.older(got[0]["t"], 2)
+    assert [e["text"] for e in got] == ["p0"] and more is False  # and no message among them
+    assert hub.older(now - 30 * 86400, 5) == ([], False)
+
+
+def test_the_replay_is_saved_in_batches_and_survives_a_restart(tmp_path):
+    from piwebkit import hub as hubmod
+    path, now = tmp_path / "events.jsonl", time.time()
+    hub = Hub()
+    hub.load(path)
+    for i in range(hubmod.SAVE_EVERY - 1):
+        hub.publish({"type": "packet", "t": now, "text": str(i)})
+    assert path.read_text() == ""  # held back until there are enough to be worth a write
+    hub.publish({"type": "packet", "t": now, "text": "9"})
+    assert len(path.read_text().splitlines()) == hubmod.SAVE_EVERY
+    hub.publish({"type": "packet", "t": now, "text": "10"})
+    hub.publish({"type": "message", "t": now, "text": "hi"})  # a message doesn't wait for a batch
+    assert path.read_text().splitlines()[-1] == json.dumps({"type": "message", "t": now, "text": "hi"}, separators=(",", ":"))
+    hub.publish({"type": "packet", "t": now, "text": "11"})
+    hub.publish({"type": "station", "call": "W1AW"}, keep=False)  # live only, never written
+    hub.flush()
+    assert "W1AW" not in path.read_text() and len(path.read_text().splitlines()) == hubmod.SAVE_EVERY + 3
+    again = Hub()
+    again.load(path)
+    assert again.subscribe()[1] == hub.subscribe()[1]
+
+
+def test_a_saved_file_drops_what_has_aged_out_and_what_is_torn(tmp_path):
+    path, now = tmp_path / "events.jsonl", time.time()
+    path.write_text(json.dumps({"type": "packet", "t": now - 40 * 86400, "text": "old"}) + "\n"
+                    + json.dumps({"type": "message", "t": now - 400 * 86400, "text": "kept"}) + "\n"
+                    + json.dumps({"type": "packet", "t": now, "text": "new"}) + "\n" + '{"type": "pack')
+    hub = Hub()
+    hub.load(path)
+    assert [e["text"] for e in hub.subscribe()[1]] == ["kept", "new"]
+    assert [json.loads(line)["text"] for line in path.read_text().splitlines()] == ["kept", "new"]  # and the file is clean again
+
+
+def test_the_file_is_rewritten_smaller_once_it_is_too_big(tmp_path, monkeypatch):
+    from piwebkit import hub as hubmod
+    clock = [time.time()]
+    monkeypatch.setattr(hubmod.time, "time", lambda: clock[0])
+    monkeypatch.setattr(hubmod, "MAX_FILE", 2000)
+    path, start = tmp_path / "events.jsonl", clock[0]
+    hub = Hub()
+    hub.load(path)
+    hub.publish({"type": "message", "t": start, "text": "kept"})
+    for i in range(30):
+        hub.publish({"type": "packet", "t": start, "text": f"packet number {i}"})
+    hub.flush()
+    assert "packet number 29" in path.read_text()  # all still inside the month
+    clock[0] = start + hubmod.MONTH + 1  # and now every packet has aged out
+    for i in range(100):
+        hub.publish({"type": "packet", "t": clock[0], "text": f"later {i}"})
+    hub.flush()
+    texts = [json.loads(line)["text"] for line in path.read_text().splitlines()]
+    assert texts == ["kept"] + [f"later {i}" for i in range(100)] and path.stat().st_mode & 0o777 == 0o600
+
+
 def test_live_events_after_sync(make_server):
     import threading
     hub, srv, _ = make_server()

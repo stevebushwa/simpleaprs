@@ -8,6 +8,8 @@ from pathlib import Path
 PATH = Path.home() / ".config" / "simpleaprs" / "config.json"
 STATIONS_PATH = PATH.with_name("stations.json")
 AUTH_PATH = PATH.with_name("auth.json")  # the web page login (headless server)
+WEB_EVENTS_PATH = PATH.with_name("web-events.jsonl")  # what the web page can look back through, kept across restarts
+FRAMES_PATH = PATH.with_name("frames.jsonl")  # the same traffic as raw frames, for desktop apps that follow this server
 STATIONS_REMOTE_PATH = PATH.with_name("stations-remote.json")  # kept apart so a server's stations never mix with local ones
 
 

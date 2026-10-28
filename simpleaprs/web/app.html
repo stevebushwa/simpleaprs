@@ -43,18 +43,25 @@
   tbody tr:hover { background: var(--bar); }
   tr.old { color: var(--dim); }
   tr[hidden] { display: none; }
-  .log { flex: 1; overflow: auto; padding: 6px 10px; font: 12px ui-monospace, monospace; }
+  .log { flex: 1; overflow: auto; padding: 6px 10px 20px; font: 12px ui-monospace, monospace; }
   .log div { padding: 1px 0; word-break: break-all; }
   .log .tx { color: var(--accent); }
   .log .t { color: var(--dim); margin-right: 8px; }
   .bar { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  .bar span { color: var(--dim); margin-left: 8px; }
   #msgs[data-show=direct] .bulletin, #msgs[data-show=bulletin] .direct { display: none; }
   form { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
   input, select, button.act { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; }
   button.act { cursor: pointer; background: var(--accent); border-color: var(--accent); color: #fff; }
   button.act:disabled, input:disabled { opacity: .5; cursor: default; }
-  #to { width: 105px; } #text, #btext { flex: 1; min-width: 0; }
-  #send { border-top: 0; padding-bottom: 0; } #bulletin { padding-top: 6px; }
+  #compose { flex-direction: column; }
+  #compose .line { display: flex; gap: 6px; }
+  #to, #text { flex: 1; min-width: 0; }
+  #compose.bulletin { border-top: 2px solid var(--accent); }  /* a bulletin goes to everyone: the form looks different while it is set to one */
+  .folder > summary { cursor: pointer; padding: 3px 0; }
+  .folder > summary .count, .folder > summary .last { color: var(--dim); margin-left: 8px; }
+  .folder.new > summary .who { font-weight: 700; color: var(--accent); }
+  .folder > .lines { margin-left: 6px; padding-left: 10px; border-left: 2px solid var(--line); }
   button.ghost { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; cursor: pointer; }
   button.ghost.danger { color: #c33; }
   #settings { padding: 10px 12px; }
@@ -105,15 +112,19 @@
     <div class="tab col" id="messages" hidden>
       <div class="bar"><label>Show <select id="mfilter"><option value="all">All messages</option><option value="direct">Direct messages</option><option value="bulletin">Bulletins</option></select></label></div>
       <div class="log" id="msgs"></div>
-      <form id="send"><input id="to" placeholder="To callsign" autocapitalize="characters"><input id="text" placeholder="Message (max 67 chars)" maxlength="67"><button class="act" disabled>Send</button></form>
-      <form id="bulletin"><select id="bn" title="Bulletin number"><option>BLN0</option><option selected>BLN1</option><option>BLN2</option><option>BLN3</option><option>BLN4</option>
-        <option>BLN5</option><option>BLN6</option><option>BLN7</option><option>BLN8</option><option>BLN9</option><option value="BLNX">BLNX (urgent)</option></select>
-        <input id="btext" placeholder="Bulletin (max 67 chars)" maxlength="67"><button class="act" disabled>Send bulletin</button></form>
+      <form id="compose">
+        <div class="line"><select id="mode" title="What to send"><option value="message">Message</option><option value="bulletin">Bulletin</option></select>
+          <input id="to" placeholder="To callsign" autocapitalize="characters">
+          <select id="bn" title="Bulletin number" hidden><option>BLN0</option><option selected>BLN1</option><option>BLN2</option><option>BLN3</option><option>BLN4</option>
+            <option>BLN5</option><option>BLN6</option><option>BLN7</option><option>BLN8</option><option>BLN9</option><option value="BLNX">BLNX (urgent)</option></select></div>
+        <div class="line"><input id="text" placeholder="Message (max 67 chars)" maxlength="67"><button class="act" disabled>Send message</button></div>
+      </form>
     </div>
     <div class="tab col" id="packets" hidden>
-      <div class="bar"><label>Show <select id="pfilter"><option value="0">All packets</option><option value="3600">Last hour</option>
+      <div class="bar"><label>Show <select id="pfilter"><option value="3600">Last hour</option>
         <option value="21600">Last 6 hours</option><option value="43200">Last 12 hours</option>
-        <option value="86400">Last day</option><option value="604800">Last week</option></select></label></div>
+        <option value="86400">Last day</option><option value="604800">Last week</option><option value="0">All (a month)</option></select></label>
+        <span id="pstatus"></span></div>
       <div class="log" id="pkts"></div>
     </div>
     <div class="tab" id="settings" hidden></div>
@@ -181,15 +192,53 @@
   };
 
   // logs
-  const addLine = (box, t, text, cls) => {
-    const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+  const dated = t => {  // a date as well as a time: the lists reach back a month, and some lines are older than this visit
+    const when = new Date(t * 1000);
+    return when.toLocaleDateString([], {month: "short", day: "numeric"}) + " " + when.toLocaleTimeString([], {hour12: false});
+  };
+  const makeLine = (t, text, cls) => {
     const d = document.createElement("div"), ts = document.createElement("span");
-    ts.className = "t"; ts.textContent = new Date(t * 1000).toLocaleTimeString([], {hour12: false});
+    ts.className = "t"; ts.textContent = dated(t);
     d.append(ts, text);
-    d.dataset.t = t;  // what the line holds, and when: a filter can ask how old it is
+    d.dataset.t = t;  // what the line holds, and when: the packet filter asks how old it is
     if (cls) d.className = cls;
-    box.appendChild(d);
-    while (box.childElementCount > 500) box.firstChild.remove();
+    return d;
+  };
+  const addLine = (box, t, text, cls, cap = 500) => {  // cap: lines kept; Infinity where the server decides how long (packets, messages)
+    const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+    box.appendChild(makeLine(t, text, cls));
+    while (box.childElementCount > cap) box.firstChild.remove();
+    if (stick) box.scrollTop = box.scrollHeight;
+  };
+
+  // messages: bulletins are lines in the list; direct messages are kept in a folder for whoever they are with, newest folder last
+  const folders = new Map();  // callsign -> {el, lines, count, last, n}
+  const peerOf = ev => ev.peer || (ev.text.match(/^me -> ([^:\s]+):/) || ev.text.match(/^([^:\s]+): /) || [])[1] || "Other";  // older saved ones have no peer
+  const folderFor = peer => {
+    let f = folders.get(peer);
+    if (f) return f;
+    const el = document.createElement("details"), sum = document.createElement("summary"), lines = document.createElement("div");
+    const who = mk("span", {className: "who", textContent: peer}), count = mk("span", {className: "count"}), last = mk("span", {className: "last"});
+    el.className = "folder direct"; lines.className = "lines";
+    sum.append(who, count, last); el.append(sum, lines);
+    el.ontoggle = () => {
+      if (!el.open) return;
+      el.classList.remove("new");
+      if (peer !== "Other") { $("mode").value = "message"; $("to").value = peer; syncCompose(); }  // opening a conversation addresses the reply to it
+    };
+    folders.set(peer, f = {el, lines, count, last, n: 0});
+    return f;
+  };
+  const addMessage = ev => {
+    const box = $("msgs"), stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+    if (ev.kind === "bulletin") box.appendChild(makeLine(ev.t, ev.text, "bulletin"));
+    else {
+      const f = folderFor(peerOf(ev));
+      f.lines.appendChild(makeLine(ev.t, ev.text, "direct"));
+      f.count.textContent = `${++f.n} message${f.n === 1 ? "" : "s"}`; f.last.textContent = dated(ev.t);
+      if (synced && !f.el.open && !ev.text.startsWith("me ->")) f.el.classList.add("new");  // unread: not our own, and not while the history is still arriving
+      box.appendChild(f.el);  // moves it to the end if it was already there
+    }
     if (stick) box.scrollTop = box.scrollHeight;
   };
 
@@ -332,18 +381,57 @@
   $("mfilter").onchange = e => { store.set("mfilter", e.target.value); showMsgs(e.target.value); };
   $("msgs").dataset.show = $("mfilter").value = ["all", "direct", "bulletin"].includes(store.get("mfilter")) ? store.get("mfilter") : "all";
 
-  // packets: the log holds the last month of what the server heard; the filter picks how far back to look
-  const showSpan = () => {
-    const secs = Number($("pfilter").value), cutoff = secs ? Date.now() / 1000 - secs : 0;
-    for (const d of $("pkts").children) d.hidden = cutoff && +d.dataset.t < cutoff;
+  // packets: a page is sent the last day when it connects; the filter picks how far back to show, and asks the server for
+  // anything older than it has (up to a month) when the choice reaches past what is loaded
+  const MONTH = 30 * 86400, PKT_SHOWS = ["0", "3600", "21600", "43200", "86400", "604800"], PAGE = 1000;
+  let covered = 0, loading = false, epoch = 0;  // covered: the list is complete back to this time (0: all of it); epoch changes with every connection, so a late reply can tell it is stale
+  const inSpan = d => { const secs = Number($("pfilter").value); return !secs || +d.dataset.t >= Date.now() / 1000 - secs; };
+  const showSpan = (all = true) => {
+    const box = $("pkts");
+    while (box.firstChild && +box.firstChild.dataset.t < Date.now() / 1000 - MONTH) box.firstChild.remove();
+    if (all) for (const d of box.children) d.hidden = !inSpan(d);
+    else if (box.lastChild) box.lastChild.hidden = !inSpan(box.lastChild);  // a new line: only it needs asking
   };
-  $("pfilter").onchange = e => { store.set("pfilter", e.target.value); showSpan(); };
-  $("pfilter").value = store.get("pfilter") || "0"; showSpan();
+  const reach = async () => {  // load older packets until the filter's span is covered, or there are no more
+    if (loading) return;
+    const box = $("pkts"), mine = epoch;
+    loading = true;
+    try {
+      for (;;) {
+        const secs = Number($("pfilter").value);  // read again each time: the choice may change while this runs
+        if (secs ? Date.now() / 1000 - secs >= covered : covered === 0) break;
+        $("pstatus").textContent = "Loading older packets...";
+        const r = await fetch(`/web/history?before=${covered}&limit=${PAGE}`);
+        if (!r.ok) throw new Error(r.status);
+        const d = await r.json();
+        if (mine !== epoch) return;  // reconnected meanwhile: the list was started over
+        const high = box.scrollHeight;
+        box.prepend(...d.events.map(ev => makeLine(ev.t, ev.text, ev.tx ? "tx" : "")));
+        box.scrollTop += box.scrollHeight - high;  // stay where the reader is
+        covered = d.more && d.events.length ? d.events[0].t : 0;
+        showSpan();
+      }
+      $("pstatus").textContent = "";
+    } catch { if (mine === epoch) $("pstatus").textContent = "Couldn't load older packets"; }
+    finally { if (mine === epoch) loading = false; }
+  };
+  $("pfilter").onchange = e => { store.set("pfilter", e.target.value); showSpan(); reach().then(() => { $("pkts").scrollTop = $("pkts").scrollHeight; }); };
+  $("pfilter").value = PKT_SHOWS.includes(store.get("pfilter")) ? store.get("pfilter") : "86400";
   setInterval(showSpan, 60000);  // on quiet air a packet can pass out of the window on its own
 
   // talking to the server
   let allowTx = false, centered = false, me = null;
-  const setBusy = () => { for (const el of [$("beacon"), $("send").querySelector("button"), $("bulletin").querySelector("button")]) el.disabled = !allowTx; };
+  // one form for both kinds, so a bulletin can't be sent by landing on the wrong button: it says which it is, and stays shut until there is something to send
+  const syncCompose = () => {
+    const bulletin = $("mode").value === "bulletin", btn = $("compose").querySelector("button");
+    $("to").hidden = bulletin; $("bn").hidden = !bulletin;
+    $("text").placeholder = (bulletin ? "Bulletin" : "Message") + " (max 67 chars)";
+    btn.textContent = bulletin ? "Send bulletin" : "Send message";
+    btn.disabled = !allowTx || !$("text").value.trim() || (!bulletin && !$("to").value.trim());
+    $("compose").classList.toggle("bulletin", bulletin);
+  };
+  const setBusy = () => { $("beacon").disabled = !allowTx; syncCompose(); };
+  for (const id of ["mode", "to", "text"]) $(id).oninput = syncCompose;
   const say = (text, ms = 6000) => { $("status").textContent = text; clearTimeout(say.t); if (ms) say.t = setTimeout(idle, ms); };
   let radio = {ok: true, text: "", note: ""}, igateText = "", welcomed = false;
   const idle = () => {
@@ -360,15 +448,16 @@
     } catch { say("Could not reach the server"); return false; }
   };
   $("beacon").onclick = () => post({type: "beacon"});
-  $("send").onsubmit = async e => {
+  $("compose").onsubmit = async e => {
     e.preventDefault();
-    const to = $("to").value.trim().toUpperCase(), text = $("text").value.trim();
-    if (to && text && await post({type: "message", to, text})) $("text").value = "";
-  };
-  $("bulletin").onsubmit = async e => {
-    e.preventDefault();
-    const text = $("btext").value.trim();
-    if (text && await post({type: "bulletin", to: $("bn").value, text})) $("btext").value = "";
+    if ($("compose").querySelector("button").disabled) return;
+    const text = $("text").value.trim();
+    if ($("mode").value === "bulletin") {
+      const to = $("bn").value;
+      if (!confirm(`Send this bulletin to everyone who can hear you?\n\n${to}: ${text}`)) return;
+      if (await post({type: "bulletin", to, text})) { $("text").value = ""; $("mode").value = "message"; }  // and back to messages
+    } else if (await post({type: "message", to: $("to").value.trim().toUpperCase(), text})) $("text").value = "";
+    syncCompose();
   };
   // The map's "Message" popup button: open the message form addressed to that station.
   window.onStationAction = (what, call) => {
@@ -381,13 +470,13 @@
     }
     if (what !== "message") return;
     document.querySelector("nav button[data-tab=messages]").click();
-    $("to").value = call; $("text").focus();
+    $("mode").value = "message"; $("to").value = call; syncCompose(); $("text").focus();
   };
 
   let synced = false;
   const logActivity = text => { $("activity").textContent = new Date().toLocaleTimeString([], {hour12: false}) + "  " + text; };
   const handle = ev => {
-    if (ev.sync) { synced = true; return idle(); }
+    if (ev.sync) { synced = true; covered = ev.since || 0; reach(); return idle(); }
     switch (ev.type) {
       case "me":
         me = ev; allowTx = ev.allow_tx;
@@ -410,13 +499,13 @@
         break;
       case "station": onStation(ev); if (synced) logActivity(`Heard ${ev.call}`); break;
       case "gone": forget(ev.calls); break;
-      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ""); showSpan(); if (synced && ev.tx) logActivity("Transmitted a packet"); break;
-      case "message": addLine($("msgs"), ev.t, ev.text, ev.kind || "direct"); if (synced) logActivity(ev.text.length > 70 ? ev.text.slice(0, 70) + "..." : ev.text); break;
+      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : "", Infinity); showSpan(false); if (synced && ev.tx) logActivity("Transmitted a packet"); break;
+      case "message": addMessage(ev); if (synced) logActivity(ev.text.length > 70 ? ev.text.slice(0, 70) + "..." : ev.text); break;
     }
   };
   const savedTab = store.get("tab"); if (savedTab) document.querySelector(`nav button[data-tab=${savedTab}]`)?.click();
   const es = new EventSource("/web/events");
-  es.onopen = () => { synced = false; $("conn").classList.add("on"); $("msgs").textContent = ""; $("pkts").textContent = ""; };  // the server replays them
+  es.onopen = () => { synced = false; epoch++; loading = false; covered = 0; $("pstatus").textContent = ""; $("conn").classList.add("on"); $("msgs").textContent = ""; folders.clear(); $("pkts").textContent = ""; };  // the server replays them
   es.onerror = () => {
     $("conn").classList.remove("on"); document.querySelector("#rx i").style.width = "0"; say("Connection lost, retrying...", 0);
     fetch("/api/auth/state").then(r => r.ok ? r.json() : null).then(s => { if (s && !s.logged_in) toLogin(); }).catch(() => {});  // logged out elsewhere?
