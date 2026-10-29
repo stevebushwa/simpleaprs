@@ -502,7 +502,7 @@ class MeshNode:
             raise MeshError("Only companions and room servers can be messaged from here.")
         self._check_text(text, 0)
         msg = {"id": uuid.uuid4().hex[:12], "kind": "dm", "peer": node["key"][:12], "dir": "out",
-               "from": self._self.get("name", ""), "text": text, "status": "sending"}
+               "from": self._self.get("name", ""), "text": text, "status": "sending", "ts": time.time()}
 
         async def go() -> None:
             self._add_message(msg)
@@ -526,7 +526,7 @@ class MeshNode:
             raise MeshError("No such channel on the node.")
         self._check_text(text, len(self._self.get("name", "").encode()) + 2)
         msg = {"id": uuid.uuid4().hex[:12], "kind": "chan", "chan": idx, "dir": "out",
-               "from": self._self.get("name", ""), "text": text, "status": "sent"}
+               "from": self._self.get("name", ""), "text": text, "status": "sent", "ts": time.time()}
 
         async def go() -> None:
             self._ok(await self.mc.commands.send_chan_msg(idx, text), "send that")

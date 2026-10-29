@@ -174,6 +174,7 @@ def test_a_new_contact_waits_to_be_added(rig):
 def test_sending_a_direct_message(rig):
     msg = rig.node.send_dm(ANNA["public_key"][:12], "on my way")
     assert msg["dir"] == "out" and msg["peer"] == ANNA["public_key"][:12]
+    assert abs(msg["ts"] - time.time()) < 5  # the page shows the reply to its send before the stored copy arrives
     until(lambda: rig.intro("msgs")[0]["status"] == "acked", "the ack")
     assert ("dm", ANNA["public_key"], "on my way") in rig.fake.commands.sent
     rig.fake.commands.ack = False
@@ -191,7 +192,7 @@ def test_direct_messages_that_cant_be_sent(rig):
 
 def test_sending_to_a_channel(rig):
     msg = rig.node.send_channel(1, "meet at 5")
-    assert msg["status"] == "sent" and msg["from"] == "Pi Node"
+    assert msg["status"] == "sent" and msg["from"] == "Pi Node" and abs(msg["ts"] - time.time()) < 5
     assert ("chan", 1, "meet at 5") in rig.fake.commands.sent and rig.intro("msgs")[0]["text"] == "meet at 5"
     with pytest.raises(MeshError, match="No such channel"):
         rig.node.send_channel(7, "hi")
