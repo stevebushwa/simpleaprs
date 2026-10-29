@@ -149,7 +149,7 @@ class Tracker:
                 frame = None
             if frame is not None and mode in ("heard", "map"):
                 level = self._judge_damaged(frame, now, mode == "map")
-            self._packet(now, damaged_line(data, whole) + ("", "; counted as heard", "; put on the map, unverified")[level], bad=True)
+            self._packet(now, damaged_line(data, whole) + ("", ", heard", ", on map")[level], bad=True)
 
     def _judge_damaged(self, frame: Frame, now: float, map_ok: bool) -> int:
         """0: nothing beyond the raw list, 1: counted as heard, 2: placed on the map."""

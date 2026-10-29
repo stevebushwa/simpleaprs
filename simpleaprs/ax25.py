@@ -135,10 +135,10 @@ def damaged_line(data: bytes, whole: bool) -> str:
     try:
         frame = Frame.decode(body)
     except ValueError:
-        return f"{plausible_header(data) or '?'}: (addresses only)   <-- DAMAGED, checksum failed"
+        return f"{plausible_header(data) or '?'}: (addresses only)   <-- DAMAGED"
     text = printable(frame.info)
     via = "".join("," + str(a) for a in frame.path)
-    return f"{frame.src}>{frame.dst}{via}:{text}   <-- DAMAGED, checksum failed: parts of it may be wrong"
+    return f"{frame.src}>{frame.dst}{via}:{text}   <-- DAMAGED"
 
 
 class HdlcDecoder:

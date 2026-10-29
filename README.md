@@ -69,7 +69,7 @@ that page.
 If `direwolf` is installed (`sudo apt install direwolf`) the server also runs it as a second decoder, receive only, on the same
 audio: it recovers more packets from weak signals, and a packet either finds is shown once (`SIMPLEAPRS_DIREWOLF=0` turns it
 off). A packet that arrives but fails its checksum, with a readable header, is not thrown away: the Raw packets tab shows it in
-grey italics marked `DAMAGED`, with whatever text came through (the end is the part most likely to be wrong). It is never passed
+grey italics ending `<-- DAMAGED`, with whatever text came through (the end is the part most likely to be wrong; a damaged packet that was used for something says so: `DAMAGED, heard` or `DAMAGED, on map`). It is never passed
 to the iGate or digipeater, never answers a message, and never moves a station that has been decoded cleanly.
 
 How far a damaged packet may go is the **Packets that arrive damaged** setting (Settings > Receive):

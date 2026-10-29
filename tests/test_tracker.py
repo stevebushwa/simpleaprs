@@ -194,7 +194,7 @@ def test_damaged_list_only_lists(rig):
     t.on_frame(position("W1AW-9"))
     rig[1].clear()
     t.on_damaged(hurt(position("W1AW-9")), False)
-    assert len(damaged_lines(rig[1])) == 1 and "counted" not in damaged_lines(rig[1])[0] and not stationed(rig[1])
+    assert len(damaged_lines(rig[1])) == 1 and damaged_lines(rig[1])[0].endswith("<-- DAMAGED") and not stationed(rig[1])
 
 
 def test_heard_refreshes_a_known_station_and_says_so(rig):
@@ -202,7 +202,7 @@ def test_heard_refreshes_a_known_station_and_says_so(rig):
     t.on_frame(position("W1AW-9"), 100.0)
     rig[1].clear()
     t.on_damaged(hurt(position("W1AW-9")), False, 500.0)
-    assert t.heard["W1AW-9"] == 500.0 and "counted as heard" in damaged_lines(rig[1])[0] and len(stationed(rig[1])) == 1
+    assert t.heard["W1AW-9"] == 500.0 and damaged_lines(rig[1])[0].endswith("<-- DAMAGED, heard") and len(stationed(rig[1])) == 1
     assert t.stations["W1AW-9"].lat == 41.7 and "W1AW-9" not in t.unverified
 
 
@@ -212,7 +212,7 @@ def test_heard_ignores_a_position_that_disagrees_with_the_known_one(rig):
     rig[1].clear()
     far = frame("W1AW-9", aprs.build_position(41.9, -72.7, "/>", "hello"))  # 20 km off: a flipped digit, not a move
     t.on_damaged(hurt(far), False, 500.0)
-    assert t.heard["W1AW-9"] == 100.0 and "counted" not in damaged_lines(rig[1])[0] and not stationed(rig[1])
+    assert t.heard["W1AW-9"] == 100.0 and damaged_lines(rig[1])[0].endswith("<-- DAMAGED") and not stationed(rig[1])
 
 
 def test_heard_does_not_place_a_station_nobody_decoded(rig):
@@ -230,7 +230,7 @@ def test_map_places_a_station_only_after_enough_copies_agree(rig):
     t.on_damaged(hurt(frame("W5HKR", WX)), False, 103.0)
     ev, = stationed(rig[1])
     assert ev["call"] == "W5HKR" and ev["unverified"] is True and ev["info"][0][0] == "Unverified" and not ev["stale"]
-    assert "put on the map, unverified" in damaged_lines(rig[1])[-1]
+    assert damaged_lines(rig[1])[-1].endswith("<-- DAMAGED, on map")
     # it is a guess: never saved, never drawn into a route, never counted as heard directly
     assert "W5HKR" not in t.raw and all(s["raw"] != "" for s in t.data()["stations"]) and not t.data()["stations"]
     assert t._pos("W5HKR") is None and ev["direct"] is False
