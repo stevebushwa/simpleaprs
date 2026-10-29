@@ -21,6 +21,9 @@ from .hub import Hub
 from .maps import WEB, MapProxy
 
 
+ICON_FILES = ("/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/manifest.webmanifest")  # the login page shows them too
+
+
 class BaseWebUI:
     cookie_name = "session"  # servers on one address need names of their own, or each login would end the others'
     app_name = "app"         # shown on the login page
@@ -79,6 +82,8 @@ class BaseWebUI:
         """Serve the page and its map files. The map style has to point back at whatever address the
         browser used to reach us, so it comes from the request."""
         path = urlparse(h.path).path
+        if path in ICON_FILES and self.proxy.find(path.lstrip("/")):  # browsers fetch these without the session cookie
+            return self.proxy.handle(h, "", index=self.index)
         if self.auth:
             if path == "/login":
                 self.proxy.send(h, 200, self.login_page(), "text/html")

@@ -6,9 +6,11 @@ import os
 import random
 import sys
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, QUrlQuery, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage
+from PySide6.QtGui import QIcon
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
@@ -912,6 +914,7 @@ def main() -> None:
     if os.environ.get("DISPLAY"):
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(str(Path(__file__).parent / "web" / "icon-512.png")))
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

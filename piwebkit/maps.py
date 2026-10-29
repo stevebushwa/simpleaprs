@@ -15,7 +15,8 @@ from typing import Callable
 from .tilecache import MAX_ENTRY, TileCache
 
 WEB = Path(__file__).parent / "web"
-TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}
+TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png",
+         ".webmanifest": "application/manifest+json"}
 PASS_HEADERS = ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag")
 
 

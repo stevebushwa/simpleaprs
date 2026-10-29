@@ -189,6 +189,4 @@ clearOld.textContent = "Clear inactive (0)";
 clearOld.title = "Forget the stations that are shown grey";
 clearOld.onclick = () => act("clear-inactive", "");
 legend.appendChild(clearOld);
-try { legend.open = localStorage.getItem("legend") !== "closed"; } catch { legend.open = true; }
-legend.addEventListener("toggle", () => { try { localStorage.setItem("legend", legend.open ? "open" : "closed"); } catch {} });
 map.getContainer().appendChild(legend);

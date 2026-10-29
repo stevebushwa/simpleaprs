@@ -100,6 +100,10 @@ def test_login_page_and_state_are_public(srv):
     st, page, _ = call(srv, "GET", "/login")
     assert st == 200 and b"Remember me" in page
     assert call(srv, "GET", "/api/auth/state")[1] == {"setup": True, "logged_in": False}
+    # the icon is public too: the login page and the browser's home-screen prompt fetch it with no session
+    for path, ctype in (("/icon.svg", "image/svg+xml"), ("/icon-192.png", "image/png"), ("/manifest.webmanifest", "application/manifest+json")):
+        st, body, hdr = call(srv, "GET", path)
+        assert st == 200 and ("Content-Type", ctype) in hdr and body, path
 
 
 def test_first_visitor_creates_the_login_and_is_logged_in(srv):

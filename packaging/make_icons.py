@@ -1,4 +1,4 @@
-"""Render simpleaprs.svg to the icon files Windows (.ico) and macOS (.icns) want.
+"""Render simpleaprs/web/icon.svg to the icon files Windows (.ico) and macOS (.icns) want.
 
     python packaging/make_icons.py OUTDIR
 
@@ -14,14 +14,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QImage, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
-here = Path(__file__).parent
+here = Path(__file__).parent.parent / "simpleaprs" / "web"
 out = Path(sys.argv[1] if len(sys.argv) > 1 else "build/icons")
 out.mkdir(parents=True, exist_ok=True)
 app = QGuiApplication([])
 image = QImage(1024, 1024, QImage.Format.Format_ARGB32)
 image.fill(Qt.GlobalColor.transparent)
 painter = QPainter(image)
-QSvgRenderer(str(here / "simpleaprs.svg")).render(painter)
+QSvgRenderer(str(here / "icon.svg")).render(painter)
 painter.end()
 image.save(str(out / "simpleaprs.png"))
 big = Image.open(out / "simpleaprs.png").convert("RGBA")

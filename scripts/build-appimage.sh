@@ -48,7 +48,7 @@ cp -a "$BUILD/pyi/simpleaprs" "$APPDIR/usr/lib/simpleaprs"
 # and the map stays blank), so use the one the system has.
 find "$APPDIR/usr/lib/simpleaprs" -name 'libgbm.so*' -delete
 cp "$ROOT/packaging/simpleaprs.desktop" "$APPDIR/simpleaprs.desktop"
-cp "$ROOT/packaging/simpleaprs.svg" "$APPDIR/simpleaprs.svg"
+cp "$ROOT/simpleaprs/web/icon.svg" "$APPDIR/simpleaprs.svg"
 ln -sf simpleaprs.svg "$APPDIR/.DirIcon"
 cat > "$APPDIR/AppRun" <<'EOS'
 #!/bin/sh

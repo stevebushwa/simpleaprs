@@ -3,6 +3,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>simpleaprs</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#12324a">
 <link rel="stylesheet" href="maplibre-gl.css">
 <link rel="stylesheet" href="map.css">
 <style>
@@ -23,11 +28,16 @@
   #rx { width: 70px; height: 8px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; flex: none; }
   #rx i { display: block; height: 100%; width: 0; background: #2a9d4a; transition: width .1s linear; }
   .grow { flex: 1; }
-  main { display: grid; grid-template-columns: 1fr 400px; min-height: 0; }
+  main { display: grid; grid-template-columns: 1fr 10px var(--side, 400px); min-height: 0; }
+  main.dragging { user-select: none; }
+  main.dragging #map { pointer-events: none; }
+  #split { position: relative; background: var(--bar); border-left: 1px solid var(--line); cursor: col-resize; touch-action: none; }
+  #split:hover, #split:focus-visible, main.dragging #split { background: var(--line); outline: 0; }
+  #split::after { content: ""; position: absolute; left: 50%; top: 50%; width: 3px; height: 36px; margin: -18px 0 0 -1.5px; border-radius: 2px; background: var(--dim); }
   #mapbox { position: relative; min-height: 0; }
   #map { position: absolute; inset: 0; }
   #msg { bottom: 36px; }  /* clear of the map's scale bar */
-  aside { display: flex; flex-direction: column; border-left: 1px solid var(--line); min-height: 0; }
+  aside { display: flex; flex-direction: column; border-left: 1px solid var(--line); min-height: 0; min-width: 0; overflow: hidden; }
   nav { display: flex; border-bottom: 1px solid var(--line); }
   nav button { flex: 1; border: 0; background: none; color: var(--dim); padding: 9px 4px; font: inherit; cursor: pointer; border-bottom: 2px solid transparent; }
   nav button.on { color: var(--fg); border-bottom-color: var(--accent); }
@@ -99,8 +109,10 @@
   h3 { margin: 18px 0 8px; font-size: 14px; }
   #igate { color: var(--dim); }
   @media (max-width: 800px) {
-    main { grid-template-columns: 1fr; grid-template-rows: 48% 1fr; }
-    aside { border-left: 0; border-top: 1px solid var(--line); }
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr 18px var(--side, 36vh); }
+    #split { border-left: 0; border-top: 1px solid var(--line); cursor: row-resize; }
+    #split::after { width: 40px; height: 4px; margin: -2px 0 0 -20px; }
+    aside { border-left: 0; }
   }
 </style>
 <header>
@@ -126,6 +138,7 @@
 </header>
 <main>
   <div id="mapbox"><div id="map"></div><div id="msg"></div><div id="cards"></div></div>
+  <div id="split" role="separator" tabindex="0" title="Drag to resize, tap to hide or show"></div>
   <aside>
     <nav><button data-tab="stations" class="on">Stations</button><button data-tab="messages">Messages</button><button data-tab="packets">Raw packets</button><button data-tab="settings">Settings</button></nav>
     <div class="tab" id="stations"><table><thead><tr><th data-sort="call" title="Sort by callsign">Station</th><th data-sort="heard" title="Sort by when last heard">Heard</th><th data-sort="dist" title="Sort by distance from you">Distance</th><th>Comment</th></tr></thead><tbody id="rows"></tbody></table></div>
@@ -163,8 +176,54 @@
   const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
                   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
+  // The sidebar (below the map on a phone) can be dragged to any size, or tapped shut to give the map the whole screen.
+  const main = document.querySelector("main"), split = $("split"), narrow = matchMedia("(max-width: 800px)");
+  const sizeKey = () => narrow.matches ? "side_h" : "side_w";
+  const room = () => (narrow.matches ? main.clientHeight : main.clientWidth) - split.offsetHeight * narrow.matches - split.offsetWidth * !narrow.matches;
+  const setSide = (px, save) => {
+    px = Math.max(0, Math.min(Math.round(px), room() - 80));
+    main.style.setProperty("--side", px + "px");
+    if (save) store.set(sizeKey(), px);
+    if (typeof map !== "undefined") map.resize();
+    return px;
+  };
+  const applySide = () => {
+    const v = store.get(sizeKey());
+    if (v === null) main.style.removeProperty("--side"); else setSide(+v, false);
+    if (typeof map !== "undefined") map.resize();
+  };
+  const sideSize = () => narrow.matches ? document.querySelector("aside").offsetHeight : document.querySelector("aside").offsetWidth;
+  const toggleSide = () => {
+    if (sideSize() > 0) { store.set("side_prev" + sizeKey(), sideSize()); setSide(0, true); }
+    else setSide(+store.get("side_prev" + sizeKey()) || (narrow.matches ? room() * .4 : 400), true);
+  };
+  split.onpointerdown = e => {
+    e.preventDefault();
+    split.setPointerCapture(e.pointerId);
+    const start = narrow.matches ? e.clientY : e.clientX, from = sideSize();
+    let moved = false;
+    main.classList.add("dragging");
+    split.onpointermove = m => {
+      const d = (narrow.matches ? m.clientY : m.clientX) - start;
+      if (Math.abs(d) > 4) moved = true;
+      if (moved) setSide(from - d, false);
+    };
+    split.onpointerup = split.onpointercancel = () => {
+      split.onpointermove = split.onpointerup = split.onpointercancel = null;
+      main.classList.remove("dragging");
+      if (moved) store.set(sizeKey(), sideSize()); else toggleSide();
+    };
+  };
+  split.onkeydown = e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSide(); }
+  };
+  narrow.addEventListener("change", applySide);
+  addEventListener("resize", () => { if (store.get(sizeKey()) !== null) applySide(); });
+  applySide();
+
   // tabs
   for (const b of document.querySelectorAll("nav button")) b.onclick = () => {
+    if (sideSize() === 0) toggleSide();  // picking a tab while the sidebar is shut opens it
     for (const o of document.querySelectorAll("nav button")) o.classList.toggle("on", o === b);
     for (const t of document.querySelectorAll(".tab")) t.hidden = t.id !== b.dataset.tab;
     store.set("tab", b.dataset.tab);
