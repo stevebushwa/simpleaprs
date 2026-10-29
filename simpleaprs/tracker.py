@@ -134,11 +134,11 @@ class Tracker:
 
     def on_damaged(self, data: bytes, whole: bool, now: float | None = None) -> None:
         """A packet that arrived but failed its checksum. What it may do depends on the setting (config.damaged_mode):
-        the raw packets list shows it as unverified text; "heard" lets it refresh a known station's last-heard time;
-        "map" also lets enough agreeing copies put a station on the map, dimmed. It never moves a station that has been
+        the raw packets list can show it as unverified text; "heard" lets it refresh a known station's last-heard time;
+        "map" lets enough agreeing copies put a station on the map, dimmed. It never moves a station that has been
         decoded cleanly, answers a message, or reaches the iGate or the digipeater."""
-        mode = self.cfg.damaged_mode
-        if mode == "off":
+        c = self.cfg
+        if not (c.damaged_list or c.damaged_heard or c.damaged_map):
             return
         now = now if now is not None else time.time()
         with self.lock:
@@ -147,11 +147,12 @@ class Tracker:
                 frame = Frame.decode(data[:-2] if whole else data)
             except ValueError:
                 frame = None
-            if frame is not None and mode in ("heard", "map"):
-                level = self._judge_damaged(frame, now, mode == "map")
-            self._packet(now, damaged_line(data, whole) + ("", ", heard", ", on map")[level], bad=True)
+            if frame is not None and (c.damaged_heard or c.damaged_map):
+                level = self._judge_damaged(frame, now, c.damaged_heard, c.damaged_map)
+            if c.damaged_list:
+                self._packet(now, damaged_line(data, whole) + ("", ", heard", ", on map")[level], bad=True)
 
-    def _judge_damaged(self, frame: Frame, now: float, map_ok: bool) -> int:
+    def _judge_damaged(self, frame: Frame, now: float, heard_ok: bool, map_ok: bool) -> int:
         """0: nothing beyond the raw list, 1: counted as heard, 2: placed on the map."""
         p = aprs.parse(frame)
         if p.kind not in ("position", "weather") or p.obj or p.inner:
@@ -174,8 +175,8 @@ class Tracker:
         copies.append((now, None if mice else pos))
         self.copies[key] = copies[-40:]
         if src in self.stations and src not in self.unverified:  # decoded cleanly before, with a position
-            if pos and not mice and damaged.metres(pos, self._pos(src)) > radius:
-                return 0  # it disagrees with where the station is: leave the clean packet in charge
+            if not heard_ok or (pos and not mice and damaged.metres(pos, self._pos(src)) > radius):
+                return 0  # not allowed, or it disagrees with where the station is: leave the clean packet in charge
             self.heard[src] = now
             self.live.add(src)
             self.dirty = True

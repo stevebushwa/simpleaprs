@@ -53,7 +53,9 @@ class Config:
     igate_radius_km: int = 50  # how far from us the server looks for those messages
     digi_enabled: bool = False  # repeat packets that ask for it (WIDE1-1, WIDE2-N, or our callsign)
     digi_wide: bool = False  # a wide-area digipeater (WIDE1-1 and WIDE2-N) rather than a fill-in (WIDE1-1 only)
-    damaged_mode: str = "list"  # what a packet that arrives with a bad checksum may do: off | list | heard | map
+    damaged_list: bool = True  # what a packet that arrives with a bad checksum may do: be listed in the raw packets tab,
+    damaged_heard: bool = False  # refresh the last-heard time of a station decoded cleanly before,
+    damaged_map: bool = False  # and put a station nobody decoded cleanly on the map, dimmed (all three off: ignore them)
     damaged_copies: int = 3  # damaged copies that must agree before a station nobody has decoded cleanly goes on the map
     damaged_radius_m: int = 150  # "the same spot" for those copies, and the most a damaged position may differ from a known one
 
@@ -61,6 +63,9 @@ class Config:
     def load(cls) -> "Config":
         try:
             raw = json.loads(PATH.read_text())
+            level = {"off": 0, "list": 1, "heard": 2, "map": 3}.get(raw.pop("damaged_mode", None))  # the first version of these settings
+            if level is not None:
+                raw.update(damaged_list=level >= 1, damaged_heard=level >= 2, damaged_map=level >= 3)
             names = {f.name for f in fields(cls)}
             return cls(**{k: v for k, v in raw.items() if k in names})
         except (OSError, ValueError):

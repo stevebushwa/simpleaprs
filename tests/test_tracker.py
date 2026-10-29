@@ -177,7 +177,7 @@ def stationed(events):
 
 def set_mode(rig, mode, **kw):
     t = rig[0]
-    t.cfg.damaged_mode = mode
+    t.cfg.damaged_list, t.cfg.damaged_heard, t.cfg.damaged_map = {"off": (0, 0, 0), "list": (1, 0, 0), "heard": (1, 1, 0), "map": (1, 1, 1)}[mode]
     for k, v in kw.items():
         setattr(t.cfg, k, v)
     return t
@@ -282,3 +282,20 @@ def test_a_damaged_message_is_never_answered(rig):
     t.known.add("W1AW-9")
     t.on_damaged(hurt(frame("W1AW-9", aprs.build_message(ME, "hello", "42"))), False, 100.0)
     assert replies == [] and types(events) == ["packet"]
+
+
+def test_the_three_damaged_settings_are_independent(rig):
+    t = rig[0]
+    t.on_frame(position("W1AW-9"), 100.0)
+    rig[1].clear()
+    # counting as heard without listing: the station is refreshed, the raw list gets nothing
+    t.cfg.damaged_list, t.cfg.damaged_heard, t.cfg.damaged_map = False, True, False
+    t.on_damaged(hurt(position("W1AW-9")), False, 500.0)
+    assert t.heard["W1AW-9"] == 500.0 and damaged_lines(rig[1]) == []
+    # the map without counting as heard: an unknown station is placed, the known one is left alone
+    t.cfg.damaged_list, t.cfg.damaged_heard, t.cfg.damaged_map, t.cfg.damaged_copies = True, False, True, 1
+    t.on_damaged(hurt(position("W1AW-9")), False, 900.0)
+    t.on_damaged(hurt(frame("W5HKR", WX)), False, 901.0)
+    assert t.heard["W1AW-9"] == 500.0 and "W5HKR" in t.unverified
+    lines = damaged_lines(rig[1])
+    assert lines[0].endswith("<-- DAMAGED") and lines[1].endswith("<-- DAMAGED, on map")

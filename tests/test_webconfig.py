@@ -67,7 +67,18 @@ def test_custom_symbol_stays_selectable():
 
 
 def test_damaged_packet_settings():
-    clean, errors = check({"damaged_mode": "map", "damaged_copies": 5, "damaged_radius_m": 300})
-    assert errors == {} and clean == {"damaged_mode": "map", "damaged_copies": 5, "damaged_radius_m": 300}
-    _, errors = check({"damaged_mode": "everything", "damaged_copies": 0, "damaged_radius_m": 10})
-    assert set(errors) == {"damaged_mode", "damaged_copies", "damaged_radius_m"}
+    new = {"damaged_list": False, "damaged_heard": True, "damaged_map": True, "damaged_copies": 5, "damaged_radius_m": 300}
+    clean, errors = check(new)
+    assert errors == {} and clean == new
+    _, errors = check({"damaged_list": "yes", "damaged_copies": 0, "damaged_radius_m": 10})
+    assert set(errors) == {"damaged_list", "damaged_copies", "damaged_radius_m"}
+
+
+def test_the_first_version_of_the_damaged_setting_is_carried_over(tmp_path, monkeypatch):
+    import json
+    from simpleaprs import config
+    for old, flags in (("off", (0, 0, 0)), ("list", (1, 0, 0)), ("heard", (1, 1, 0)), ("map", (1, 1, 1))):
+        (tmp_path / "c.json").write_text(json.dumps({"callsign": "N0CALL", "damaged_mode": old, "damaged_copies": 2}))
+        monkeypatch.setattr(config, "PATH", tmp_path / "c.json")
+        c = config.Config.load()
+        assert (c.damaged_list, c.damaged_heard, c.damaged_map) == tuple(map(bool, flags)) and c.damaged_copies == 2

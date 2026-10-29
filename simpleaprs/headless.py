@@ -301,7 +301,7 @@ class Server:
                       "igate_radius_km", "lat", "lon", "digi_enabled", "digi_wide"}:
             self._stop_gateways()
             self._start_gateways()
-        if "damaged_mode" in changed and self.cfg.damaged_mode != "map":
+        if "damaged_map" in changed and not self.cfg.damaged_map:
             self.tracker.drop_unverified()
         if "beacon_minutes" in changed:
             self.next_beacon = time.monotonic() + c.beacon_minutes * 60 if c.beacon_minutes else 0.0
