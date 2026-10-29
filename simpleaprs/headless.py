@@ -24,6 +24,7 @@ from .digipeater import Digipeater
 from .igate import IGate, passcode
 from .mapserver import MapProxy, tile_cache
 from .netshare import ShareServer
+from . import direwolf
 from .soundio import SoundRadio, device_names, find_device
 from .tracker import Tracker
 from .webui import WebUI
@@ -149,7 +150,7 @@ class Server:
         self.hub = Hub()      # raw frames, for desktop clients
         self.web_hub = Hub()  # decoded events, for browsers
         self.tracker = Tracker(cfg, self._emit, self.transmit, STATIONS_PATH)
-        self.radio = SoundRadio(self.on_frame, on_gain_message=log, on_level=self._on_level)
+        self.radio = SoundRadio(self.on_frame, on_gain_message=log, on_level=self._on_level, on_damaged=self.tracker.on_damaged)
         self.share: ShareServer | None = None
         self.igate: IGate | None = None
         self.digi: Digipeater | None = None
@@ -217,6 +218,9 @@ class Server:
             self.radio_note = missing or ("" if self.radio.start(c.input_device, c.output_device, c.auto_gain) else "no audio input found")
         except SystemExit as e:  # sounddevice / PortAudio isn't installed
             self.radio_note = str(e).splitlines()[0]
+        if not self.radio_note and direwolf.available():
+            log("Receive: Dire Wolf is decoding alongside the built-in demodulator" if self.radio.dw_on
+                else "Receive: direwolf is installed but would not start; using the built-in demodulator only")
         if self.radio_note:
             self.radio.stop()
             log(f"Radio not listening: {self.radio_note}. Choose devices in the web page's Settings > Radio.")

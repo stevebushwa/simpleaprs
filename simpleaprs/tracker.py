@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import aprs, details, trails
-from .ax25 import Frame
+from .ax25 import Frame, damaged_line
 from .config import Config
 
 
@@ -124,8 +124,14 @@ class Tracker:
     def _station(self, call: str) -> None:
         self.emit(self.station_event(call), False)  # the intro carries current state, no need to replay these
 
-    def _packet(self, t: float, text: str, tx: bool = False) -> None:
-        self.emit({"type": "packet", "t": t, "text": text, "tx": tx})
+    def _packet(self, t: float, text: str, tx: bool = False, bad: bool = False) -> None:
+        self.emit({"type": "packet", "t": t, "text": text, "tx": tx, **({"bad": True} if bad else {})})
+
+    def on_damaged(self, data: bytes, whole: bool, now: float | None = None) -> None:
+        """A packet that arrived but failed its checksum: only the raw packets list shows it, as unverified text.
+        It never reaches the map, the station list, the iGate or the digipeater."""
+        with self.lock:
+            self._packet(now if now is not None else time.time(), damaged_line(data, whole), bad=True)
 
     def _message(self, t: float, text: str, kind: str = "direct", peer: str = "") -> None:
         """peer: who a direct message is with (it was from them or to them), so a page can keep a conversation together."""

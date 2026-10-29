@@ -72,6 +72,7 @@
   .log { flex: 1; overflow: auto; padding: 6px 10px 20px; font: 12px ui-monospace, monospace; }
   .log div { padding: 1px 0; word-break: break-all; }
   .log .tx { color: var(--accent); }
+  .log .bad { color: var(--dim); font-style: italic; }
   .log .t { color: var(--dim); margin-right: 8px; }
   .bar { padding: 6px 10px; border-bottom: 1px solid var(--line); }
   .bar span { color: var(--dim); margin-left: 8px; }
@@ -673,7 +674,7 @@
         const d = await r.json();
         if (mine !== epoch) return;  // reconnected meanwhile: the list was started over
         const high = box.scrollHeight;
-        box.prepend(...d.events.map(ev => makeLine(ev.t, ev.text, ev.tx ? "tx" : "")));
+        box.prepend(...d.events.map(ev => makeLine(ev.t, ev.text, ev.tx ? "tx" : ev.bad ? "bad" : "")));
         box.scrollTop += box.scrollHeight - high;  // stay where the reader is
         covered = d.more && d.events.length ? d.events[0].t : 0;
         showSpan();
@@ -772,7 +773,7 @@
         break;
       case "station": onStation(ev); if (synced) logActivity(`Heard ${ev.call}`); break;
       case "gone": forget(ev.calls); break;
-      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : "", Infinity); showSpan(false); if (synced && ev.tx) logActivity("Transmitted a packet"); break;
+      case "packet": addLine($("pkts"), ev.t, ev.text, ev.tx ? "tx" : ev.bad ? "bad" : "", Infinity); showSpan(false); if (synced && ev.tx) logActivity("Transmitted a packet"); break;
       case "message": addMessage(ev); alertFor(ev); if (synced) logActivity(ev.text.length > 70 ? ev.text.slice(0, 70) + "..." : ev.text); break;
     }
   };

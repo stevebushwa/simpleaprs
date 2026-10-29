@@ -145,3 +145,13 @@ def test_a_station_is_direct_when_no_digipeater_repeated_its_packet(rig):
     t.on_frame(obj)  # an object is somewhere else; whoever sent it is not what is plotted
     direct = {e["call"]: e["direct"] for e, _ in events if e["type"] == "station"}
     assert direct == {"W1AW-9": True, "K1ABC": False, "WX1OBJ": False}
+
+
+def test_damaged_packet_goes_to_the_raw_list_only(rig):
+    t, events, _, _ = rig
+    raw = position("W1AW-9", "hello")
+    t.on_damaged(raw + b"\x01\xfe", False)
+    assert [ev["type"] for ev, _ in events] == ["packet"]
+    ev = events[0][0]
+    assert ev["bad"] is True and ev["text"].startswith("W1AW-9>") and "DAMAGED" in ev["text"]
+    assert not t.stations and not t.heard  # nothing from it reaches the map or the station list

@@ -5,11 +5,13 @@ from __future__ import annotations
 import math
 import queue
 import threading
+import time
 
 import numpy as np
 
 from .afsk import BAUD, Demodulator, modulate
 from .autogain import AutoGain
+from .direwolf import Direwolf
 
 FS = 48000
 
@@ -38,11 +40,19 @@ def find_device(name: str, inputs: bool) -> str | None:
 
 
 class SoundRadio:
-    def __init__(self, on_frame, on_tx_start=lambda: None, on_gain_message=lambda text: None, on_level=lambda v: None) -> None:
+    def __init__(self, on_frame, on_tx_start=lambda: None, on_gain_message=lambda text: None, on_level=lambda v: None,
+                 on_damaged=lambda data, whole: None) -> None:
         """on_frame(raw) is called from a worker thread for every frame decoded, on_level(0..1) for every
-        tenth of a second of input audio (the same scale as audio.Radio.level)."""
-        self.on_frame, self.on_tx_start, self.on_level = on_frame, on_tx_start, on_level
+        tenth of a second of input audio (the same scale as audio.Radio.level), on_damaged(data, whole) for every
+        packet that arrived but failed its checksum and that no decoder got right (see ax25.damaged_line)."""
+        self.on_frame, self.on_tx_start, self.on_level, self.on_damaged = on_frame, on_tx_start, on_level, on_damaged
+        self._held: list[tuple[float, bytes, bool]] = []  # damaged packets waiting a moment to see if the other decoder got them
         self._demod = Demodulator(FS)
+        self._dw = Direwolf(self._frame, FS)  # a second decoder, if direwolf is installed
+        self._seen: dict[bytes, float] = {}  # frames just delivered, so the two decoders don't both report one packet
+        self._seen_lock = threading.Lock()
+        self.dw_on = False  # is Dire Wolf decoding alongside the built-in demodulator
+        self.delivered = 0  # frames handed on, from either decoder
         self._gain = AutoGain(FS, on_gain_message)
         self._chunks: queue.Queue = queue.Queue(maxsize=200)
         self._in = self._out_dev = None
@@ -58,8 +68,33 @@ class SoundRadio:
         """Running totals since start: frames decoded, damaged ones heard, and the input clipping counts.
         "peak" is the loudest sample (0..1) since the previous call."""
         peak, self._peak = self._peak, 0.0
-        return {**self._demod._hdlc.stats, "loud": self.loud, "clipped": self.clipped, "peak": peak,
+        stats = {**self._demod._hdlc.stats}
+        dw = max(0, self.delivered - stats["ok"])  # what the built-in decoder did not find
+        stats["ok"] = self.delivered
+        return {**stats, "dw": dw, "loud": self.loud, "clipped": self.clipped, "peak": peak,
                 "last_bad": self._demod._hdlc.last_bad}
+
+    def _frame(self, raw: bytes) -> None:
+        """A decoded frame from either decoder: delivered once, whichever finds it first (both find most of them)."""
+        now = time.monotonic()
+        with self._seen_lock:
+            self._seen = {k: t for k, t in self._seen.items() if now - t < 10}
+            if raw in self._seen:
+                return
+            self._seen[raw] = now
+            self.delivered += 1
+        self.on_frame(raw)
+
+    DAMAGED_WAIT = 2.0  # seconds a damaged packet waits for the other decoder before it is shown
+
+    def _release_damaged(self, now: float) -> None:
+        """Show the damaged packets that have waited long enough, unless a decoder delivered that same packet properly."""
+        while self._held and now - self._held[0][0] >= self.DAMAGED_WAIT:
+            when, data, whole = self._held.pop(0)
+            with self._seen_lock:  # delivered since just before it was heard
+                done = any(k.startswith(data[:24]) and t >= when - 3 for k, t in self._seen.items())
+            if not done:
+                self.on_damaged(data, whole)
 
     def _measure(self, x: np.ndarray) -> None:
         """Count a block as a signal if it is well above the noise floor, and as clipped if it also hit full scale.
@@ -86,6 +121,7 @@ class SoundRadio:
         except (sd.PortAudioError, ValueError):
             self._in = None
             return False
+        self.dw_on = self._dw.start()
         self._worker = threading.Thread(target=self._decode, daemon=True)
         self._worker.start()
         return True
@@ -95,6 +131,7 @@ class SoundRadio:
             self._in.stop()
             self._in.close()
             self._in = None
+        self._dw.stop()
         if self._worker:
             self._chunks.put(None)
             self._worker.join(2)
@@ -117,8 +154,12 @@ class SoundRadio:
             if self.transmitting:  # half duplex: don't decode our own audio
                 continue
             self._gain.feed(x)
+            self._dw.feed(data)
             for fr in self._demod.feed(x):
-                self.on_frame(fr)
+                self._frame(fr)
+            now = time.monotonic()
+            self._held += [(now, data, whole) for data, whole in self._demod.take_damaged()]
+            self._release_damaged(now)
 
     def transmit(self, frame: bytes, lead_ms: int = 500, level: float = 0.5) -> None:
         """VOX-friendly: the preamble flags double as the lead-in that opens VOX."""

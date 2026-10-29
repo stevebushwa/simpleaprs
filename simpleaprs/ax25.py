@@ -125,15 +125,33 @@ def repair_one_bit(data: bytes) -> bytes | None:
     return None
 
 
+def damaged_line(data: bytes, whole: bool) -> str:
+    """A packet that failed its checksum as one line for the raw packets list: the addresses, then the text with anything
+    that is not printable shown as a dot and the trailing junk cut off. whole: the bytes ended on a clean flag, so the last
+    two are the checksum and not text. The text can have wrong characters in it, mostly near the end, which the line says."""
+    body = data[:-2] if whole else data
+    try:
+        frame = Frame.decode(body)
+    except ValueError:
+        return f"{plausible_header(data) or '?'}: (addresses only)   <-- DAMAGED, checksum failed"
+    text = "".join(chr(b) if 32 <= b < 127 else "." for b in frame.info).rstrip(". ")
+    via = "".join("," + str(a) for a in frame.path)
+    return f"{frame.src}>{frame.dst}{via}:{text}   <-- DAMAGED, checksum failed: parts of it may be wrong"
+
+
 class HdlcDecoder:
     """Feed it NRZI-decoded bits; yields frames whose FCS checks out, or that one flipped bit makes check out.
     stats counts what else was heard: fixed = ok frames that needed that one bit put right (also counted in ok),
     corrupt = a packet whose checksum failed, slip = one that lost or gained a bit; last_bad is who it looked
-    like it came from."""
+    like it came from. damaged collects those packets themselves as (bytes, whole) for take_damaged(). A frame
+    ends at a flag or, when the signal faded before one came, at the run of ones that stands in for it."""
+
+    MAX_BITS = 3000  # longer than any frame; what is still open past this was noise
 
     def __init__(self) -> None:
         self.stats = {"ok": 0, "fixed": 0, "corrupt": 0, "slip": 0}
         self.last_bad = ""
+        self.damaged: list[tuple[bytes, bool]] = []
         self._reset()
 
     def _reset(self) -> None:
@@ -141,36 +159,45 @@ class HdlcDecoder:
         self.cur: list[int] = []
         self.active = False
 
+    def take_damaged(self) -> list[tuple[bytes, bool]]:
+        out, self.damaged = self.damaged, []
+        return out
+
+    def _end(self) -> bytes | None:
+        """The frame in cur, whose last seven bits were the flag (or the start of an abort); None if it is not one."""
+        body = self.cur[:-7]  # drop the flag's leading 0 and six 1s
+        if not self.active or len(body) < 8 * 17:
+            return None
+        data = bytes(sum(b << k for k, b in enumerate(body[i:i + 8])) for i in range(0, len(body) - 7, 8))
+        whole = len(body) % 8 == 0
+        if whole and crc16_x25(data[:-2]).to_bytes(2, "little") == data[-2:]:
+            self.stats["ok"] += 1
+            return data[:-2]
+        if who := plausible_header(data):
+            fixed = repair_one_bit(data) if whole else None
+            if fixed:
+                self.stats["ok"] += 1
+                self.stats["fixed"] += 1
+                return fixed[:-2]
+            self.stats["corrupt" if whole else "slip"] += 1
+            self.last_bad = who
+            self.damaged.append((data, whole))
+        return None
+
     def feed(self, bit: int) -> bytes | None:
         if bit:
             self.ones += 1
-            if self.ones > 6:  # abort
+            if self.ones > 6:  # abort, or a flag whose closing 0 was lost
+                result = self._end()
                 self._reset()
-                return None
+                return result
             self.cur.append(1)
+            if len(self.cur) > self.MAX_BITS:
+                self._reset()
             return None
         ones, self.ones = self.ones, 0
         if ones == 6:  # flag
-            result = None
-            if self.active and len(self.cur) >= 7:
-                body = self.cur[:-7]  # drop the flag's leading 0 and six 1s
-                if len(body) >= 8 * 17:
-                    data = bytes(
-                        sum(b << k for k, b in enumerate(body[i:i + 8]))
-                        for i in range(0, len(body) - 7, 8)
-                    )
-                    if len(body) % 8 == 0 and crc16_x25(data[:-2]).to_bytes(2, "little") == data[-2:]:
-                        result = data[:-2]
-                        self.stats["ok"] += 1
-                    elif who := plausible_header(data):
-                        fixed = repair_one_bit(data) if len(body) % 8 == 0 else None
-                        if fixed:
-                            result = fixed[:-2]
-                            self.stats["ok"] += 1
-                            self.stats["fixed"] += 1
-                        else:
-                            self.stats["corrupt" if len(body) % 8 == 0 else "slip"] += 1
-                            self.last_bad = who
+            result = self._end()
             self.cur = []
             self.active = True
             return result

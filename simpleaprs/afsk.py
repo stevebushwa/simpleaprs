@@ -54,6 +54,10 @@ class Demodulator:
             out.append(np.hypot(re, im))
         return out[0] - out[1]
 
+    def take_damaged(self) -> list[tuple[bytes, bool]]:
+        """Packets heard since the last call that looked like AX.25 but failed their checksum: (bytes, whole)."""
+        return self._hdlc.take_damaged()
+
     def feed(self, samples: np.ndarray) -> list[bytes]:
         d = self._decision(np.asarray(samples, dtype=np.float32))
         frames: list[bytes] = []

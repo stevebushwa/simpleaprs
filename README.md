@@ -66,6 +66,12 @@ that page.
     simpleaprs --headless                   # starts straight away, even with nothing set up yet
     simpleaprs --list-devices               # audio device names, as the options below expect them
 
+If `direwolf` is installed (`sudo apt install direwolf`) the server also runs it as a second decoder, receive only, on the same
+audio: it recovers more packets from weak signals, and a packet either finds is shown once (`SIMPLEAPRS_DIREWOLF=0` turns it
+off). A packet that arrives but fails its checksum, with a readable header, is not thrown away: the Raw packets tab shows it in
+grey italics marked `DAMAGED`, with whatever text came through (the end is the part most likely to be wrong). It is never put on
+the map, in the station list, or passed to the iGate or digipeater.
+
 (`python -m simpleaprs --headless` works too.) It prints the web address, e.g. `http://raspberrypi.local:8073/`, and logs
 packets heard and sent (`-q` hides packets). Ctrl+C stops it.
 
