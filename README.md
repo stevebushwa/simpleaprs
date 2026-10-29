@@ -121,6 +121,12 @@ drops out once it is a month old) and messages for good, however many packets co
 tens of MB) so a restart doesn't empty the page. They are written ten events at a time (a message at once; everything when the
 server stops, or every 30 seconds) and rewritten smaller when a file passes 2 MB, which also drops what has aged out.
 
+**Frequencies.** The **Frequencies** button next to the title drops down a quick-reference card: APRS (144.390 and the HF
+frequency), the ISS (voice repeater, APRS, crew contacts), FM simplex calling frequencies, weak-signal calling frequencies,
+HF digital (FT8, JS8Call, WSPR, PSK31, RTTY, SSTV), the Hurricane Watch Net, NOAA Weather Radio and the LoRa mesh channels. Type in its
+search box (`iss`, `2 m`, `ft8`, `146.52`) to narrow it. It lists US (IARU Region 2) frequencies and says when they were checked; the
+list is plain data in `simpleaprs/web/frequencies.js`.
+
 **Searching and the map.** The Raw packets tab has a search box that narrows the lines to those containing what you type (the
 callsign, a word, a time); it looks within the span the Show menu picks, so choose a longer one to search further back. The box
 at the top of the page finds a station by callsign, or a word from its comment, and shows it on the map with its route. Click

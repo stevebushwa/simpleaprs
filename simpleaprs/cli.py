@@ -116,7 +116,7 @@ def selftest() -> int:
 
     from . import app  # noqa: F401  (imports Qt, Qt WebEngine and Qt Multimedia)
     from .mapserver import WEB
-    for root, names in ((WEB, ("app.html", "map.js", "icon.svg", "icon-512.png")), (SHARED_WEB, ("login.html", "maplibre-gl.js", "pmtiles.js"))):
+    for root, names in ((WEB, ("app.html", "map.js", "frequencies.js", "icon.svg", "icon-512.png")), (SHARED_WEB, ("login.html", "maplibre-gl.js", "pmtiles.js"))):
         for name in names:
             if not (root / name).is_file():
                 print(f"missing {Path(root / name)}", file=sys.stderr)

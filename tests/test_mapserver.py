@@ -67,3 +67,27 @@ def test_no_map_server_set_is_a_clean_failure():
     p._style(None, "http://x")
     p._proxy(type("H", (), {"path": "/nomad/x.pmtiles", "headers": {}})())
     assert sent == [502, 502]
+
+
+def test_frequencies_card_data_is_served_and_sane():
+    import json
+    import re
+
+    m = MapServer("")
+    try:
+        status, body = get(m, "/frequencies.js")
+        assert status == 200 and body.startswith(b"// ") and b"const FREQUENCIES = " in body
+        data = json.loads(re.search(rb"const FREQUENCIES = (\{.*\});", body, re.S).group(1))
+        assert data["checked"] and data["sources"]
+        names = [g["name"] for g in data["groups"]]
+        assert len(names) == len(set(names)) >= 5
+        for g in data["groups"]:
+            for it in g["items"]:
+                assert it["f"].strip() and it["what"].strip(), it
+                for num in re.findall(r"\d+(?:\.\d+)?", it["f"]):  # every frequency is within the amateur and service bands the card covers
+                    assert 1.8 <= float(num) <= 2400, it
+        every = " ".join(it["f"] for g in data["groups"] for it in g["items"])
+        for must in ("144.390", "146.520", "145.990", "437.800", "446.000", "14.074"):
+            assert must in every, must
+    finally:
+        m.stop()
