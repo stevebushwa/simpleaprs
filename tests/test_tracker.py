@@ -155,3 +155,130 @@ def test_damaged_packet_goes_to_the_raw_list_only(rig):
     ev = events[0][0]
     assert ev["bad"] is True and ev["text"].startswith("W1AW-9>") and "DAMAGED" in ev["text"]
     assert not t.stations and not t.heard  # nothing from it reaches the map or the station list
+
+
+# --- packets that arrive damaged --------------------------------------------------------------------
+
+WX = b"!2935.50N/09815.97W_269/021g023t081r000p001P001h65b10164tRSW"
+
+
+def hurt(raw: bytes) -> bytes:
+    """A packet as it comes out when the last bytes are lost: the text with junk after it, no checksum to check."""
+    return raw + b"\x01\xfe\x00"
+
+
+def damaged_lines(events):
+    return [ev["text"] for ev, _ in events if ev["type"] == "packet" and ev.get("bad")]
+
+
+def stationed(events):
+    return [ev for ev, _ in events if ev["type"] == "station"]
+
+
+def set_mode(rig, mode, **kw):
+    t = rig[0]
+    t.cfg.damaged_mode = mode
+    for k, v in kw.items():
+        setattr(t.cfg, k, v)
+    return t
+
+
+def test_damaged_off_shows_nothing(rig):
+    t = set_mode(rig, "off")
+    t.on_damaged(hurt(frame("W5HKR", WX)), False)
+    assert rig[1] == []
+
+
+def test_damaged_list_only_lists(rig):
+    t = set_mode(rig, "list")
+    t.on_frame(position("W1AW-9"))
+    rig[1].clear()
+    t.on_damaged(hurt(position("W1AW-9")), False)
+    assert len(damaged_lines(rig[1])) == 1 and "counted" not in damaged_lines(rig[1])[0] and not stationed(rig[1])
+
+
+def test_heard_refreshes_a_known_station_and_says_so(rig):
+    t = set_mode(rig, "heard")
+    t.on_frame(position("W1AW-9"), 100.0)
+    rig[1].clear()
+    t.on_damaged(hurt(position("W1AW-9")), False, 500.0)
+    assert t.heard["W1AW-9"] == 500.0 and "counted as heard" in damaged_lines(rig[1])[0] and len(stationed(rig[1])) == 1
+    assert t.stations["W1AW-9"].lat == 41.7 and "W1AW-9" not in t.unverified
+
+
+def test_heard_ignores_a_position_that_disagrees_with_the_known_one(rig):
+    t = set_mode(rig, "heard")
+    t.on_frame(position("W1AW-9"), 100.0)
+    rig[1].clear()
+    far = frame("W1AW-9", aprs.build_position(41.9, -72.7, "/>", "hello"))  # 20 km off: a flipped digit, not a move
+    t.on_damaged(hurt(far), False, 500.0)
+    assert t.heard["W1AW-9"] == 100.0 and "counted" not in damaged_lines(rig[1])[0] and not stationed(rig[1])
+
+
+def test_heard_does_not_place_a_station_nobody_decoded(rig):
+    t = set_mode(rig, "heard")
+    for i in range(5):
+        t.on_damaged(hurt(frame("W5HKR", WX)), False, 100.0 + i)
+    assert "W5HKR" not in t.stations
+
+
+def test_map_places_a_station_only_after_enough_copies_agree(rig):
+    t = set_mode(rig, "map", damaged_copies=3)
+    for i in range(2):
+        t.on_damaged(hurt(frame("W5HKR", WX)), False, 100.0 + i)
+    assert "W5HKR" not in t.stations and not stationed(rig[1])
+    t.on_damaged(hurt(frame("W5HKR", WX)), False, 103.0)
+    ev, = stationed(rig[1])
+    assert ev["call"] == "W5HKR" and ev["unverified"] is True and ev["info"][0][0] == "Unverified" and not ev["stale"]
+    assert "put on the map, unverified" in damaged_lines(rig[1])[-1]
+    # it is a guess: never saved, never drawn into a route, never counted as heard directly
+    assert "W5HKR" not in t.raw and all(s["raw"] != "" for s in t.data()["stations"]) and not t.data()["stations"]
+    assert t._pos("W5HKR") is None and ev["direct"] is False
+
+
+def test_map_needs_the_copies_to_agree_on_where(rig):
+    t = set_mode(rig, "map", damaged_copies=3)
+    for i, lat in enumerate(("2935.50N", "2945.50N", "2955.50N", "3005.50N")):  # four different places
+        t.on_damaged(hurt(frame("W5HKR", WX.replace(b"2935.50N", lat.encode()))), False, 100.0 + i)
+    assert "W5HKR" not in t.stations
+
+
+def test_map_never_places_a_moving_station(rig):
+    t = set_mode(rig, "map", damaged_copies=1)
+    mice = aprs.make_frame("N5ZR-9", b"`~0YlqU>/`\"8@}441.725MHz T123 +500_%", "WIDE1-1").encode()
+    t.on_damaged(hurt(mice), False, 100.0)
+    assert "N5ZR-9" not in t.stations
+
+
+def test_map_refuses_a_digipeater_nobody_decoded_and_text_malformed_in_the_middle(rig):
+    t = set_mode(rig, "map", damaged_copies=1)
+    t.on_damaged(hurt(frame("W5HKR", WX, "QX5II-11*,WIDE2-1")), False, 100.0)
+    t.on_damaged(hurt(frame("W5HKR", WX.replace(b"r000p001", b"r(0p;kL"))), False, 101.0)  # damage with plenty of text after it
+    assert "W5HKR" not in t.stations
+    t.known.add("WX5II-11")
+    t.on_damaged(hurt(frame("W5HKR", WX, "WX5II-11*,WIDE2-1")), False, 102.0)
+    assert "W5HKR" in t.stations
+
+
+def test_a_clean_packet_takes_over_from_a_guess(rig):
+    t = set_mode(rig, "map", damaged_copies=1)
+    t.on_damaged(hurt(frame("W5HKR", WX)), False, 100.0)
+    assert "W5HKR" in t.unverified
+    t.on_frame(frame("W5HKR", aprs.build_position(29.5917, -98.2662, "/_", "wx")), 200.0)
+    assert "W5HKR" not in t.unverified and "unverified" not in stationed(rig[1])[-1] and "W5HKR" in t.raw
+
+
+def test_turning_the_map_level_off_takes_the_guesses_away(rig):
+    t = set_mode(rig, "map", damaged_copies=1)
+    t.on_damaged(hurt(frame("W5HKR", WX)), False, 100.0)
+    rig[1].clear()
+    t.drop_unverified()
+    assert "W5HKR" not in t.stations and rig[1] == [({"type": "gone", "calls": ["W5HKR"]}, False)]
+
+
+def test_a_damaged_message_is_never_answered(rig):
+    t, events, replies, _ = rig
+    set_mode(rig, "map", damaged_copies=1)
+    t.known.add("W1AW-9")
+    t.on_damaged(hurt(frame("W1AW-9", aprs.build_message(ME, "hello", "42"))), False, 100.0)
+    assert replies == [] and types(events) == ["packet"]

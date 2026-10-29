@@ -53,6 +53,9 @@ class Config:
     igate_radius_km: int = 50  # how far from us the server looks for those messages
     digi_enabled: bool = False  # repeat packets that ask for it (WIDE1-1, WIDE2-N, or our callsign)
     digi_wide: bool = False  # a wide-area digipeater (WIDE1-1 and WIDE2-N) rather than a fill-in (WIDE1-1 only)
+    damaged_mode: str = "list"  # what a packet that arrives with a bad checksum may do: off | list | heard | map
+    damaged_copies: int = 3  # damaged copies that must agree before a station nobody has decoded cleanly goes on the map
+    damaged_radius_m: int = 150  # "the same spot" for those copies, and the most a damaged position may differ from a known one
 
     @classmethod
     def load(cls) -> "Config":

@@ -64,3 +64,10 @@ def test_custom_symbol_stays_selectable():
     sym = next(f for f in fields(INS, OUTS, "I&") if f.key == "symbol")
     assert ["I&", "Custom  (I&)"] in sym.options
     assert not any("Custom" in label for _, label in next(f for f in fields(INS, OUTS, "/>") if f.key == "symbol").options)
+
+
+def test_damaged_packet_settings():
+    clean, errors = check({"damaged_mode": "map", "damaged_copies": 5, "damaged_radius_m": 300})
+    assert errors == {} and clean == {"damaged_mode": "map", "damaged_copies": 5, "damaged_radius_m": 300}
+    _, errors = check({"damaged_mode": "everything", "damaged_copies": 0, "damaged_radius_m": 10})
+    assert set(errors) == {"damaged_mode", "damaged_copies", "damaged_radius_m"}

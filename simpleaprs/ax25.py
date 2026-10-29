@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from .damaged import printable
+
 
 def crc16_x25(data: bytes) -> int:
     crc = 0xFFFF
@@ -134,7 +136,7 @@ def damaged_line(data: bytes, whole: bool) -> str:
         frame = Frame.decode(body)
     except ValueError:
         return f"{plausible_header(data) or '?'}: (addresses only)   <-- DAMAGED, checksum failed"
-    text = "".join(chr(b) if 32 <= b < 127 else "." for b in frame.info).rstrip(". ")
+    text = printable(frame.info)
     via = "".join("," + str(a) for a in frame.path)
     return f"{frame.src}>{frame.dst}{via}:{text}   <-- DAMAGED, checksum failed: parts of it may be wrong"
 

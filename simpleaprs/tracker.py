@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import aprs, details, trails
+from . import aprs, damaged, details, trails
 from .ax25 import Frame, damaged_line
 from .config import Config
 
@@ -29,6 +29,9 @@ class Tracker:
         self.trails: dict[str, trails.Trail] = {}  # station -> where it has been, oldest first
         self.note: dict[str, str] = {}  # station -> the text its table row shows
         self.live: set[str] = set()  # heard this run; the rest are remembered ones, drawn grey
+        self.known: set[str] = set()  # callsigns seen in a packet that decoded cleanly, as a source or a digipeater
+        self.unverified: set[str] = set()  # stations in self.stations only because damaged packets agreed on where they are
+        self.copies: dict[str, list[tuple[float, tuple[float, float] | None]]] = {}  # "SRC>DST" -> (time, position) of its damaged packets
         self.bulletins: dict[tuple[str, str], str] = {}  # (sender, BLN address) -> last text logged: senders repeat them
         self.dirty = False
 
@@ -58,6 +61,7 @@ class Tracker:
                     self.trails[p.source] = trails.clean(saved.get("trails", {}).get(p.source)) or trails.Trail([[p.lat, p.lon, int(self.heard[p.source])]])
                 except (KeyError, ValueError, TypeError, AttributeError):
                     continue
+            self.known |= set(self.roles) | set(self.stations)
 
     def data(self) -> dict:
         """What we remember, in the form stored on disk and sent to desktop clients."""
@@ -85,7 +89,7 @@ class Tracker:
 
     def _pos(self, call: str) -> tuple[float, float] | None:
         p = self.stations.get(call)
-        return (p.lat, p.lon) if p else None
+        return (p.lat, p.lon) if p and call not in self.unverified else None  # a route is never drawn through a guess
 
     def me_event(self, allow_tx: bool) -> dict:
         c = self.cfg
@@ -98,7 +102,8 @@ class Tracker:
         p = self.stations[call]
         wx, roles = self.wx.get(call, {}), self.roles.get(call, set())
         icon, cls, kind = aprs.classify(p.symbol, bool(wx), roles)
-        info = [["Position", f"{p.lat:.5f}, {p.lon:.5f}"], ["Type", kind], ["Symbol", p.symbol], ["Comment", p.comment],
+        info = [["Unverified", f"Placed from {len(self.copies.get(f'{call}>{p.frame.dst}', ()))} packets that failed their checksum and agree"]] if call in self.unverified else []
+        info += [["Position", f"{p.lat:.5f}, {p.lon:.5f}"], ["Type", kind], ["Symbol", p.symbol], ["Comment", p.comment],
                 ["Via", ",".join(str(a) for a in p.frame.path)], ["Sent by", str(p.frame.src) if p.obj else ""],
                 *[[k, v] for k, v in details.extract(p)], *[[k, v] for k, v in wx.items()]]
         segs: list[dict] = []
@@ -109,12 +114,12 @@ class Tracker:
         return {"type": "station", "call": call, "lat": p.lat, "lon": p.lon, "icon": icon, "cls": cls,
                 "kinds": sorted(aprs.kinds(p.symbol, bool(wx), roles)), "info": info, "segs": segs,
                 "trail": trails.line(self.trails.get(call, [])), "temp": wx.get("Temp", ""), "heard": self.heard.get(call, 0), "stale": call not in self.live,
-                "note": self.note.get(call, ""), "direct": self.is_direct(call)}
+                "note": self.note.get(call, ""), "direct": self.is_direct(call), **({"unverified": True} if call in self.unverified else {})}
 
     def is_direct(self, call: str) -> bool:
         """Was its last packet heard straight from it, with no digipeater between? (An object came from somewhere else.)"""
         p = self.stations[call]
-        return not p.obj and not any(a.repeated for a in p.frame.path)
+        return call not in self.unverified and not p.obj and not any(a.repeated for a in p.frame.path)
 
     def intro(self, allow_tx: bool) -> list[dict]:
         """What a web client needs before it can follow along: who we are and every station we know."""
@@ -128,10 +133,80 @@ class Tracker:
         self.emit({"type": "packet", "t": t, "text": text, "tx": tx, **({"bad": True} if bad else {})})
 
     def on_damaged(self, data: bytes, whole: bool, now: float | None = None) -> None:
-        """A packet that arrived but failed its checksum: only the raw packets list shows it, as unverified text.
-        It never reaches the map, the station list, the iGate or the digipeater."""
+        """A packet that arrived but failed its checksum. What it may do depends on the setting (config.damaged_mode):
+        the raw packets list shows it as unverified text; "heard" lets it refresh a known station's last-heard time;
+        "map" also lets enough agreeing copies put a station on the map, dimmed. It never moves a station that has been
+        decoded cleanly, answers a message, or reaches the iGate or the digipeater."""
+        mode = self.cfg.damaged_mode
+        if mode == "off":
+            return
+        now = now if now is not None else time.time()
         with self.lock:
-            self._packet(now if now is not None else time.time(), damaged_line(data, whole), bad=True)
+            level = 0
+            try:
+                frame = Frame.decode(data[:-2] if whole else data)
+            except ValueError:
+                frame = None
+            if frame is not None and mode in ("heard", "map"):
+                level = self._judge_damaged(frame, now, mode == "map")
+            self._packet(now, damaged_line(data, whole) + ("", "; counted as heard", "; put on the map, unverified")[level], bad=True)
+
+    def _judge_damaged(self, frame: Frame, now: float, map_ok: bool) -> int:
+        """0: nothing beyond the raw list, 1: counted as heard, 2: placed on the map."""
+        p = aprs.parse(frame)
+        if p.kind not in ("position", "weather") or p.obj or p.inner:
+            return 0
+        pos = (p.lat, p.lon) if p.lat is not None else None
+        if pos and not (-90 <= pos[0] <= 90 and -180 <= pos[1] <= 180):
+            return 0
+        brk = damaged.broken_at(damaged.printable(frame.info))
+        if brk is not None and brk < len(frame.info) - damaged.TAIL:
+            return 0  # malformed before the end, where the damage can't be the usual one
+        src = str(frame.src).rstrip("*")
+        digis = [c for c in (str(a).rstrip("*") for a in frame.path) if not damaged.ALIAS.match(c)]
+        known = self.known | (set(self.stations) - self.unverified)
+        if not all(c in known for c in digis):
+            return 0  # a digipeater nobody has decoded cleanly is more likely a corrupted callsign than a new one
+        mice = frame.info[:1] in (b"`", b"'")
+        key = f"{src}>{frame.dst}"
+        radius = self.cfg.damaged_radius_m
+        copies = [c for c in self.copies.get(key, []) if now - c[0] < 86400]
+        copies.append((now, None if mice else pos))
+        self.copies[key] = copies[-40:]
+        if src in self.stations and src not in self.unverified:  # decoded cleanly before, with a position
+            if pos and not mice and damaged.metres(pos, self._pos(src)) > radius:
+                return 0  # it disagrees with where the station is: leave the clean packet in charge
+            self.heard[src] = now
+            self.live.add(src)
+            self.dirty = True
+            self._station(src)
+            return 1
+        if not map_ok or not pos or mice:
+            return 0  # nowhere to put it, or a moving station, whose position can't be checked against anything
+        agree = [c for c in self.copies[key] if c[1] and damaged.metres(c[1], pos) <= radius]
+        if len(agree) < self.cfg.damaged_copies:
+            return 0
+        self.stations[src] = p
+        self.unverified.add(src)
+        self.heard[src] = now
+        self.live.add(src)
+        self.note[src] = "unverified: " + (p.comment or ", ".join(f"{k} {v}" for k, v in p.weather.items()))
+        if p.weather:
+            self.wx[src] = p.weather
+        self._station(src)
+        return 2
+
+    def drop_unverified(self) -> None:
+        """Take the stations that only damaged packets placed off the map (the setting no longer allows them)."""
+        with self.lock:
+            gone = sorted(self.unverified)
+            for c in gone:
+                for d in (self.stations, self.heard, self.wx, self.note):
+                    d.pop(c, None)
+                self.live.discard(c)
+            self.unverified.clear()
+            if gone:
+                self.emit({"type": "gone", "calls": gone}, False)
 
     def _message(self, t: float, text: str, kind: str = "direct", peer: str = "") -> None:
         """peer: who a direct message is with (it was from them or to them), so a page can keep a conversation together."""
@@ -147,6 +222,8 @@ class Tracker:
         now = now if now is not None else time.time()
         p = aprs.parse(frame)
         with self.lock:
+            self.known.add(str(frame.src).rstrip("*"))
+            self.known.update(c for c in (str(a).rstrip("*") for a in frame.path) if not damaged.ALIAS.match(c))
             for digi in aprs.digipeaters(frame):
                 self._role(digi, "digi")
             if p.gated:
@@ -164,6 +241,7 @@ class Tracker:
             if p.weather:
                 self.wx[p.source] = p.weather
             if p.kind == "position":
+                self.unverified.discard(p.source)  # a clean packet from it settles where it is
                 if p.lat is not None:
                     trails.extend(self.trails.setdefault(p.source, trails.Trail()), p.lat, p.lon, now)
                 self.stations[p.source], self.raw[p.source] = p, raw
@@ -188,6 +266,7 @@ class Tracker:
             for c in gone:
                 for d in (self.stations, self.raw, self.heard, self.wx, self.roles, self.trails, self.note):
                     d.pop(c, None)
+                self.unverified.discard(c)
             if gone:
                 self.dirty = True
                 self.save()

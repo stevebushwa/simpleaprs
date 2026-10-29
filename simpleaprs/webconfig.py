@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from . import aprs
 
-GROUPS = ["Station", "Radio", "Map", "iGate", "Digipeater", "Access"]
+GROUPS = ["Station", "Radio", "Receive", "Map", "iGate", "Digipeater", "Access"]
 
 _CALL = re.compile(r"^[A-Z0-9]{1,6}(-\d{1,2})?$")
 _HOP = re.compile(r"^[A-Z0-9]{1,6}(-\d{1,2})?\*?$")
@@ -57,6 +57,17 @@ def fields(inputs: list[str], outputs: list[str], symbol: str) -> list[Field]:
         Field("tx_level", "Transmit audio level", "number", "Radio", "Lower it if the radio sounds distorted", 0.05, 1, 0.05),
         Field("auto_gain", "Automatic input volume", "bool", "Radio",
               "Turns the sound card's input volume down when the radio's audio clips and up when it stays weak (PulseAudio/PipeWire)."),
+        Field("damaged_mode", "Packets that arrive damaged", "select", "Receive",
+              "Packets heard with a bad checksum are never used as if they were good. This is how far they may go.", options=[
+                  ["off", "Ignore them"],
+                  ["list", "Show them in the Raw packets tab, marked damaged"],
+                  ["heard", "Also count stations we know as heard"],
+                  ["map", "Also put stations on the map, dimmed, when enough copies agree"]]),
+        Field("damaged_copies", "Copies that must agree", "number", "Receive",
+              "A station that has never been decoded cleanly goes on the map only after this many damaged packets from it agree on where it is",
+              1, 10, 1),
+        Field("damaged_radius_m", "Same spot means within", "number", "Receive",
+              "Also the most a damaged position may differ from where a station is known to be before it is ignored", 20, 5000, 10, unit="m"),
         Field("nomad_url", "N.O.M.A.D. server", "text", "Map", "Project N.O.M.A.D. address; blank for no map", placeholder="http://nomad.local:8080"),
         Field("map_cache", "Cache map tiles on this machine", "bool", "Map"),
         Field("map_cache_mb", "Cache size limit", "number", "Map", lo=50, hi=20000, step=50, unit="MB", shows_if="map_cache"),
@@ -130,6 +141,14 @@ def _check(key: str, v, inputs: list[str], outputs: list[str]):
         if v and not re.match(r"^https?://[^\s/]+", v):
             raise ValueError("an address starting with http:// or https://")
         return v
+    if key == "damaged_mode":
+        if v not in ("off", "list", "heard", "map"):
+            raise ValueError("off, list, heard or map")
+        return v
+    if key == "damaged_copies":
+        return _num(v, 1, 10, True)
+    if key == "damaged_radius_m":
+        return _num(v, 20, 5000, True)
     if key == "map_cache_mb":
         return _num(v, 50, 20000, True)
     if key == "igate_server":

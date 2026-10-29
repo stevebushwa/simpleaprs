@@ -69,8 +69,21 @@ that page.
 If `direwolf` is installed (`sudo apt install direwolf`) the server also runs it as a second decoder, receive only, on the same
 audio: it recovers more packets from weak signals, and a packet either finds is shown once (`SIMPLEAPRS_DIREWOLF=0` turns it
 off). A packet that arrives but fails its checksum, with a readable header, is not thrown away: the Raw packets tab shows it in
-grey italics marked `DAMAGED`, with whatever text came through (the end is the part most likely to be wrong). It is never put on
-the map, in the station list, or passed to the iGate or digipeater.
+grey italics marked `DAMAGED`, with whatever text came through (the end is the part most likely to be wrong). It is never passed
+to the iGate or digipeater, never answers a message, and never moves a station that has been decoded cleanly.
+
+How far a damaged packet may go is the **Packets that arrive damaged** setting (Settings > Receive):
+
+| Setting | What a damaged packet can do |
+|---|---|
+| Ignore them | nothing; they are not listed |
+| Show them in the Raw packets tab (default) | appear there, marked `DAMAGED` |
+| Also count stations we know as heard | refresh the last-heard time of a station decoded cleanly before, if the packet's callsigns are ones decoded cleanly and its position agrees with the known one |
+| Also put stations on the map | put a station nobody has decoded cleanly on the map, dimmed and marked unverified, once **Copies that must agree** damaged packets from it put it in the same spot (**Same spot means within** metres). Not for moving (Mic-E) stations. A clean packet from it replaces the guess. |
+
+Every level also needs the text to be well-formed APRS up to the last few bytes, where the damage usually is. On two recordings
+of a weak digipeater (two hours) this put the one station that was never decoded cleanly on the map after three copies and counted
+20 damaged packets as heard; raising the copies or lowering the distance makes it stricter.
 
 (`python -m simpleaprs --headless` works too.) It prints the web address, e.g. `http://raspberrypi.local:8073/`, and logs
 packets heard and sent (`-q` hides packets). Ctrl+C stops it.

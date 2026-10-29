@@ -243,12 +243,12 @@
   const plot = call => {
     const {ev, tr} = stations[call];
     tr.hidden = !visible(ev);
-    tr.classList.toggle("old", ev.stale);
+    tr.classList.toggle("old", ev.stale || !!ev.unverified);
     tr.children[1].textContent = stamp(ev.heard);
     tr.children[3].textContent = ev.note;
     const label = filter === "weather" && ev.temp ? `${call} ${ev.temp}` : call;
-    const info = [["Heard", stamp(ev.heard) + (ev.stale ? " (previous session)" : "")], ...ev.info];
-    onMap("setStation", call, ev.lat, ev.lon, label, false, info, ev.stale, ev.icon, ev.cls, ev.segs, visible(ev), ev.trail);
+    const info = [["Heard", stamp(ev.heard) + (ev.unverified ? " (unverified)" : ev.stale ? " (previous session)" : "")], ...ev.info];
+    onMap("setStation", call, ev.lat, ev.lon, label, false, info, ev.stale || !!ev.unverified, ev.icon, ev.cls, ev.segs, visible(ev), ev.trail);
   };
   const forget = calls => {
     for (const c of calls) { stations[c]?.tr.remove(); stations[c]?.opt.remove(); delete stations[c]; }
