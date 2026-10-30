@@ -171,6 +171,7 @@ const secRadio = cfg => {
   const sf = sel(range(5, 12).map(v => [String(v), "SF" + v]), String(m.sf));
   const cr = sel(range(5, 8).map(v => [String(v), `4/${v}`]), String(m.cr));
   const power = mk("input", {type: "number", min: 1, max: m.max_tx_power || 22, value: m.tx_power});
+  const hashSize = m.path_hash ? sel([["1", "1 byte (the default)"], ["2", "2 bytes"], ["3", "3 bytes"]], String(m.path_hash)) : null;
   const match = () => presets.findIndex(p => p.freq === Number(freq.value) && String(p.bw) === bw.value && String(p.sf) === sf.value && String(p.cr) === cr.value);
   const preset = sel([["", "Custom"], ...presets.map((p, i) => [String(i), `${p.name} (${p.freq} MHz)`])], String(match() < 0 ? "" : match()));
   const warn = mk("div", {className: "warn"});
@@ -191,13 +192,14 @@ const secRadio = cfg => {
   const save = button("Save to node", () => withBusy(save, async () => {
     const changed = Number(freq.value) !== m.freq || Number(bw.value) !== m.bw || Number(sf.value) !== m.sf || Number(cr.value) !== m.cr;
     if (changed && !confirm(`Change the radio to ${freq.value} MHz, ${bw.value} kHz, SF${sf.value}, 4/${cr.value}?\n\nThe node will only hear nodes that use exactly the same four settings.`)) return;
-    const r = await call("/api/radio", {freq: Number(freq.value), bw: Number(bw.value), sf: Number(sf.value), cr: Number(cr.value), tx_power: Number(power.value)});
+    const r = await call("/api/radio", {freq: Number(freq.value), bw: Number(bw.value), sf: Number(sf.value), cr: Number(cr.value), tx_power: Number(power.value), path_hash: hashSize ? Number(hashSize.value) : 0});
     say(msg, r, "Saved."); if (r.ok) editing = false;
   }), "act");
   return mk("div", {}, mk("h3", {textContent: "Radio"}),
     mk("div", {className: "hint", textContent: "Nodes only hear each other when the frequency, bandwidth, spreading factor and coding rate all match. Use what the mesh around you uses."}),
     fld("Preset", preset), warn, fld("Frequency (MHz)", freq), fld("Bandwidth", bw), fld("Spreading factor", sf), fld("Coding rate", cr),
     fld(`Transmit power (dBm, 1 to ${m.max_tx_power || 22})`, power, "More power reaches further and uses more battery. The antenna matters more."),
+    ...(hashSize ? [fld("Path hash size", hashSize, "How many bytes name each repeater in a route. With 1 byte, two repeaters often share a name and a route can pick the wrong one; 2 bytes makes that rare. Use what the mesh around you uses, and don't set it higher than the repeaters can forward.")] : []),
     mk("div", {className: "btns"}, save), msg,
     mk("div", {className: "hint", textContent: "Never transmit without an antenna attached: it can damage the radio."}));
 };

@@ -52,7 +52,8 @@ class FakeCommands:
         return Event(kind, payload or {})
 
     async def send_device_query(self):
-        return self._answer("device_query", {"model": "Heltec V3", "ver": "v1.9.0", "fw_build": "test", "max_channels": 4, "max_contacts": self.max_contacts},
+        return self._answer("device_query", {"model": "Heltec V3", "ver": "v1.9.0", "fw_build": "test", "max_channels": 4, "max_contacts": self.max_contacts,
+                             "path_hash_mode": self.mc.path_hash_mode},
                             EventType.DEVICE_INFO)
 
     async def send_appstart(self):
@@ -100,6 +101,11 @@ class FakeCommands:
         self.sent.append(("set_other_params", dict(infos)))
         self.mc.self_info.update({k: infos[k] for k in ("manual_add_contacts", "telemetry_mode_base", "telemetry_mode_loc",
                                                         "telemetry_mode_env", "adv_loc_policy") if k in infos})
+        return Event(EventType.OK, {})
+
+    async def set_path_hash_mode(self, mode):
+        self.sent.append(("set_path_hash_mode", mode))
+        self.mc.path_hash_mode = mode
         return Event(EventType.OK, {})
 
     async def reboot(self):
@@ -248,6 +254,7 @@ class FakeCommands:
 
 class FakeMesh:
     def __init__(self, name: str = "Pi Node", lat: float = 0.0, lon: float = 0.0) -> None:
+        self.path_hash_mode = 0
         self.self_info = {"adv_type": 1, "tx_power": 20, "max_tx_power": 22, "public_key": key_for(name), "adv_lat": lat,
                           "adv_lon": lon, "radio_freq": 910.525, "radio_bw": 62.5, "radio_sf": 7, "radio_cr": 5, "name": name,
                           "multi_acks": 0, "adv_loc_policy": 1, "telemetry_mode_base": 0, "telemetry_mode_loc": 0,

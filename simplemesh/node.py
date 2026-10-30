@@ -251,6 +251,8 @@ class MeshNode:
         if info and info.type != EventType.ERROR:
             self._self.update(model=info.payload.get("model", ""), version=info.payload.get("ver", ""),
                               build=info.payload.get("fw_build", ""))
+            if "path_hash_mode" in info.payload:  # older firmware doesn't have the setting at all
+                self._self["path_hash"] = info.payload["path_hash_mode"] + 1
             self._publish_self(mc.self_info, max_channels=info.payload.get("max_channels", 8), max_contacts=info.payload.get("max_contacts"))
         if time.time() > CLOCK_SANE:  # the node has no clock of its own; other nodes ignore messages that look old
             await mc.commands.set_time(int(time.time()))
@@ -689,7 +691,7 @@ class MeshNode:
 
     # --- radio, privacy, channels -------------------------------------------------------------------
 
-    def set_radio(self, freq: float, bw: float, sf: int, cr: int, tx_power: int) -> None:
+    def set_radio(self, freq: float, bw: float, sf: int, cr: int, tx_power: int, path_hash: int | None = None) -> None:
         if not 150 <= freq <= 960:
             raise MeshError("The frequency is between 150 and 960 MHz (the radio chip's range).")
         if bw not in BANDWIDTHS:
@@ -699,11 +701,17 @@ class MeshNode:
         top = int(self._self.get("max_tx_power") or 22)
         if not 1 <= tx_power <= top:
             raise MeshError(f"This node's power is 1 to {top} dBm.")
+        if path_hash is not None and path_hash not in (1, 2, 3):
+            raise MeshError("The path hash size is 1, 2 or 3 bytes.")
 
         async def go() -> None:
             # the library turns MHz into whole kHz with int(); the nudge keeps 910.525 from landing on 910524
             self._ok(await self.mc.commands.set_radio(round(freq, 3) + 1e-9, bw + 1e-9, sf, cr), "change the radio settings")
             self._ok(await self.mc.commands.set_tx_power(tx_power), "change the transmit power")
+            if path_hash is not None and path_hash != self._self.get("path_hash"):
+                self._ok(await self.mc.commands.set_path_hash_mode(path_hash - 1), "change the path hash size")
+                with self._lock:
+                    self._self["path_hash"] = path_hash
             await self._refresh_self()
         self.request(go)
 

@@ -35,6 +35,18 @@ def test_radio_settings_reach_the_node_and_the_page(rig):
     assert any("self" in e and e["self"]["freq"] == 869.618 for e in rig.events())
 
 
+def test_path_hash_size_is_read_from_the_node_and_set_on_it(rig):
+    assert rig.intro("self")["path_hash"] == 1
+    rig.node.set_radio(910.525, 62.5, 7, 5, 10, path_hash=2)
+    assert sent(rig, "set_path_hash_mode") == [("set_path_hash_mode", 1)]  # the node counts from 0
+    assert rig.intro("self")["path_hash"] == 2
+    rig.node.set_radio(910.525, 62.5, 7, 5, 10, path_hash=2)
+    rig.node.set_radio(910.525, 62.5, 7, 5, 10)
+    assert len(sent(rig, "set_path_hash_mode")) == 1  # unchanged, or not asked about: left alone
+    with pytest.raises(MeshError):
+        rig.node.set_radio(910.525, 62.5, 7, 5, 10, path_hash=4)
+
+
 def test_every_preset_survives_the_librarys_rounding(rig):
     from simplemesh.node import PRESETS
     for p in PRESETS:

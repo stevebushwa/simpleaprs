@@ -123,7 +123,8 @@ class MeshWeb(BaseWebUI):
         self.node.reset_path(self._key(d))
 
     def _radio(self, d: dict) -> None:
-        self.node.set_radio(float(d["freq"]), float(d["bw"]), int(d["sf"]), int(d["cr"]), int(d["tx_power"]))
+        self.node.set_radio(float(d["freq"]), float(d["bw"]), int(d["sf"]), int(d["cr"]), int(d["tx_power"]),
+                             int(d["path_hash"]) if d.get("path_hash") else None)
 
     def _privacy(self, d: dict) -> None:
         self.node.set_privacy(bool(d["manual_add"]), int(d["tel_base"]), int(d["tel_loc"]), int(d["tel_env"]), int(d["loc_policy"]))
