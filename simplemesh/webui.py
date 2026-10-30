@@ -32,6 +32,7 @@ class MeshWeb(BaseWebUI):
         self.cert_file: Path | None = None  # the certificate the page is served with over https, for installing on a device
         routes = {"/api/send": self._send, "/api/advert": self._advert, "/api/profile": self._profile,
                   "/api/node/add": self._node_add, "/api/node/remove": self._node_remove,
+                  "/api/node/purge": self._node_purge, "/api/autopurge": self._autopurge, "/api/node/restore-route": self._node_restore_route,
                   "/api/node/reset-path": self._node_reset, "/api/settings": self._save_settings,
                   "/api/radio": self._radio, "/api/privacy": self._privacy, "/api/node/reboot": self._reboot,
                   "/api/stats": lambda d: self.node.stats(),
@@ -70,7 +71,8 @@ class MeshWeb(BaseWebUI):
 
     def settings_view(self) -> dict:
         home = self.cfg.home
-        return {"values": {"serial_port": self.cfg.serial_port, "baud": self.cfg.baud, "nomad_url": self.cfg.nomad_url},
+        return {"values": {"serial_port": self.cfg.serial_port, "baud": self.cfg.baud, "nomad_url": self.cfg.nomad_url,
+                           "auto_purge": self.cfg.auto_purge, "purge_high": self.cfg.purge_high, "purge_low": self.cfg.purge_low},
                 "ports": all_ports(), "detected": candidate_ports(), "bauds": BAUDS, "map_server": self.proxy.nomad,
                 "home": list(home) if home else None, "presets": PRESETS, "bandwidths": BANDWIDTHS}
 
@@ -99,7 +101,23 @@ class MeshWeb(BaseWebUI):
         self.node.add_node(self._key(d))
 
     def _node_remove(self, d: dict) -> None:
-        self.node.remove_node(self._key(d))
+        self.node.remove_node(self._key(d), forget=bool(d.get("forget")))
+
+    def _node_purge(self, d: dict) -> dict:
+        keys = d.get("keys")
+        if not isinstance(keys, list) or not all(isinstance(k, str) and KEY.match(k) for k in keys):
+            raise ValueError("keys")
+        return {"removed": self.node.purge_nodes(keys)}
+
+    def _autopurge(self, d: dict) -> None:
+        high, low = int(d["high"]), int(d["low"])
+        if not 50 <= low < high <= 99:
+            raise MeshError("Use percentages from 50 to 99, with the point where it stops below the point where it starts.")
+        self.cfg.auto_purge, self.cfg.purge_high, self.cfg.purge_low = bool(d["enabled"]), high, low
+        self.cfg.save()
+
+    def _node_restore_route(self, d: dict) -> None:
+        self.node.restore_route(self._key(d))
 
     def _node_reset(self, d: dict) -> None:
         self.node.reset_path(self._key(d))

@@ -35,12 +35,14 @@ const act = async (path, body) => {  // a request to the node; its refusal is sh
 };
 
 // ---- routes ---------------------------------------------------------------------------------------------
-const hopsOf = n => {
-  if (!n.path || n.hops <= 0) return [];
-  const w = (n.hash_size || 1) * 2, out = [];
-  for (let i = 0; i < n.hops; i++) out.push(n.path.slice(i * w, (i + 1) * w));
+const hopsFrom = (path, hops, size) => {
+  if (!path || !(hops > 0)) return [];
+  const w = (size || 1) * 2, out = [];
+  for (let i = 0; i < hops; i++) out.push(path.slice(i * w, (i + 1) * w));
   return out;
 };
+const hopsOf = n => hopsFrom(n.path, n.hops, n.hash_size);
+const routeWords = (hops, list) => hops === 0 ? "direct" : hops + (hops === 1 ? " hop: " : " hops: ") + list.map(hopName).join(" > ");
 const byHash = hex => [...S.nodes.values()].filter(x => x.type === 2 && x.key.startsWith(hex));
 const hopName = hex => { const c = byHash(hex); return c.length === 1 ? c[0].name : c.length ? hex + "?" : hex; };
 // Positions to draw through: us, each hop we can place, the node. A hop we can't place makes the next line dashed.
@@ -75,7 +77,7 @@ const touch = (...what) => {
 
 let synced = false;  // the history the server sends first is not news; what comes after it is
 const apply = ev => {
-  if (ev.status) { S.status = ev.status; touch("header"); }
+  if (ev.status) { const since = S.status.since; S.status = ev.status; touch("header"); if (ev.status.since !== since) touch("nodes", "map"); }
   if (ev.self) { S.me = ev.self; touch("header", "map", "settings"); }
   if (ev.channels) { S.channels = ev.channels; touch("convs", "settings"); }
   if (ev.flash) { S.flash = ev.flash; touch("flash"); }
@@ -94,18 +96,27 @@ const apply = ev => {
 let filter = store.get("filter") || "all";
 $("filter").value = filter;
 $("filter").onchange = e => { filter = e.target.value; store.set("filter", filter); touch("nodes", "map"); };
+// A node is shown grey until it has been heard since the node connected (what this page remembers from before is only
+// where it was last), and again when it has been quiet for a day.
+const quiet = n => { const h = heard(n); return !h || h < (S.status.since || 0) || now() - h > DAY; };
 const visible = n => filter === "all" || (filter === "saved" ? n.saved : String(n.type) === filter);
 
 const render = d => {
-  if (d.has("header")) renderHeader();
+  if (d.has("header")) { renderHeader(); renderContacts(); }
   if (d.has("map")) renderMap();
-  if (d.has("nodes")) renderNodes();
+  if (d.has("nodes")) { renderNodes(); renderContacts(); }
   if (d.has("convs")) renderConvs();
   if (d.has("packets")) renderPackets();
   if (d.has("settings")) settingsLive();
   if (d.has("flash")) updateFlash();
 };
 
+// how full the node's contact list is: red from 80%
+const renderContacts = () => {
+  const cap = S.me.max_contacts, used = [...S.nodes.values()].filter(n => n.saved).length, el = $("contacts");
+  el.textContent = S.status.connected && cap ? `Contacts ${used}/${cap}` : "";
+  el.classList.toggle("nearly", !!cap && used >= cap * 0.8);
+};
 const renderHeader = () => {
   const s = S.status, m = S.me;
   $("conn").classList.toggle("on", !!s.connected);
@@ -122,7 +133,7 @@ const renderMap = () => {
   MM.setMe(S.me.lat, S.me.lon, S.me.name);
   for (const n of S.nodes.values()) {
     const h = heard(n);
-    MM.setNode(n, {visible: visible(n), old: h > 0 && now() - h > DAY});
+    MM.setNode(n, {visible: visible(n), old: quiet(n)});
   }
   if (!fitted) {  // once, when the first positions arrive: show them all (or home, if there is nothing yet)
     const pts = [...S.nodes.values()].filter(n => n.lat != null).map(n => [n.lat, n.lon]);
@@ -133,7 +144,7 @@ const renderMap = () => {
 };
 
 const nodeRow = n => {
-  const tr = mk("tr", {className: heard(n) && now() - heard(n) > DAY ? "old" : ""});
+  const tr = mk("tr", {className: quiet(n) ? "old" : ""});
   const name = mk("td", {}, mk("span", {className: "chip t" + n.type, textContent: TYPE[n.type] || "?"}), " ", n.name);
   if (!n.saved) {
     name.append(" ", mk("button", {className: "ghost small", textContent: "Add", title: "Save this node on your node",
@@ -141,7 +152,7 @@ const nodeRow = n => {
   }
   const route = n.hops == null ? "" : n.hops < 0 ? "flood" : n.hops === 0 ? "direct" : n.hops + (n.hops === 1 ? " hop" : " hops");
   tr.append(name, mk("td", {textContent: ago(heard(n))}), mk("td", {textContent: n.saved ? route : ""}),
-            mk("td", {textContent: n.snr != null ? n.snr + " dB" : ""}));
+            mk("td", {textContent: n.snr != null ? n.snr + " dB" : "", title: n.heard_hops > 0 ? `The last hop's signal: this node's advert came ${n.heard_hops} hops` : ""}));
   tr.onclick = () => {
     if (n.lat == null) return show(`${n.name} hasn't shared a position.`);
     MM.flyTo(n.lat, n.lon, 13); MM.open(n.key);
@@ -162,23 +173,28 @@ MM.popupFor = key => {
   const n = S.nodes.get(key);
   const box = mk("div");
   if (!n) return box;
-  const route = n.hops == null ? "" : n.hops < 0 ? "flood (no direct route learned yet)" : n.hops === 0 ? "direct" :
-    n.hops + (n.hops === 1 ? " hop: " : " hops: ") + hopsOf(n).map(hopName).join(" > ");
+  const route = n.hops == null ? "" : n.hops < 0 ? "flood (no direct route learned yet)" : routeWords(n.hops, hopsOf(n));
+  const remembered = n.last_hops != null && !(n.saved && n.hops >= 0);  // a route it had once, that the node doesn't have now
+  const signal = n.snr == null ? "" : `${n.snr} dB SNR` + (n.rssi != null ? `, ${n.rssi} dBm` : "") +
+    (n.heard_hops > 0 ? ` (the last of ${n.heard_hops} hops, not this node's own)` : n.heard_hops === 0 ? " (direct)" : "");
   const rows = [["Type", TYPE[n.type] || "?"], ["Heard", heard(n) ? `${ago(heard(n))} (${stamp(heard(n))})` : "never"],
-    ["Route", n.saved ? route : ""], ["Signal", n.snr != null ? `${n.snr} dB SNR` + (n.rssi != null ? `, ${n.rssi} dBm` : "") : ""],
+    ["Route", n.saved ? route : ""], ["Last route", remembered ? routeWords(n.last_hops, hopsFrom(n.last_path, n.last_hops, n.last_hash)) + (n.last_path_at ? ` (${ago(n.last_path_at)})` : "") : ""],
+    ["Signal", signal],
     ["Position", n.lat != null ? `${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}` : ""], ["Key", n.key.slice(0, 16) + "..."],
-    ["Status", n.saved ? "Saved on your node" : "Heard, not saved"]];
+    ["Status", n.saved ? "Saved on your node" : "Kept here, not on your node"]];
   const dl = mk("dl");
   for (const [k, v] of rows) if (v) dl.append(mk("dt", {textContent: k}), mk("dd", {textContent: v}));
   box.append(mk("h4", {textContent: n.name}), dl);
   const btn = (text, fn, cls = "") => box.append(mk("button", {textContent: text, className: cls, onclick: fn}));
   if (n.saved && n.type === 1) btn("Message", () => openDm(n.key.slice(0, 12)));
   if (n.saved && [2, 3, 4].includes(n.type)) btn(n.type === 3 ? "Open room" : "Manage", () => openAdmin(n.key));
-  if (n.saved) btn("Trace route", async () => { const r = await act("/api/admin/route", {key: n.key}); if (r.ok) show(routeText(r.body.route)); }, "plain");
+  if (n.saved) btn("Find route", async () => { const r = await act("/api/admin/route", {key: n.key}); if (r.ok) show(routeText(r.body.route)); }, "plain");
   if (n.saved) btn("Share link", async () => { const r = await act("/api/contact/export", {key: n.key}); if (r.ok) info(n.name + " contact link", r.body.uri, "Anyone can import this link to add the node as a contact."); }, "plain");
   if (!n.saved) btn("Add", () => act("/api/node/add", {key: n.key}));
+  if (n.saved && n.hops < 0 && n.last_hops != null) btn("Use last route", () => act("/api/node/restore-route", {key: n.key}), "plain");
   if (n.saved && n.hops >= 0) btn("Forget route", () => act("/api/node/reset-path", {key: n.key}), "plain");
-  btn("Remove", () => { if (confirm(`Remove ${n.name}?`)) act("/api/node/remove", {key: n.key}); }, "plain");
+  if (n.saved) btn("Remove from node", () => { if (confirm(`Remove ${n.name} from your node? It stays here, with its last route, and can be added back.`)) act("/api/node/remove", {key: n.key}); }, "plain");
+  else btn("Forget", () => { if (confirm(`Forget ${n.name}? It is removed from here as well.`)) act("/api/node/remove", {key: n.key, forget: true}); }, "plain");
   return box;
 };
 MM.onselect = key => {
@@ -473,6 +489,6 @@ const boot = () => {
     };
   };
   connect();
-  setInterval(() => touch("nodes"), 30000);  // "5 min ago" moves on its own
+  setInterval(() => touch("nodes", "map"), 30000);  // "5 min ago" moves on its own, and a node goes grey once it has been quiet a day
 };
 document.addEventListener("DOMContentLoaded", boot);

@@ -89,6 +89,34 @@ const secNode = cfg => {
     fld("Position in adverts", policy), mk("div", {className: "t", textContent: "Who may ask this node for:", style: "font-weight:600;margin-bottom:3px"}),
     ...tel.map(([, label, ctl]) => fld(label, ctl)), mk("div", {className: "btns"}, pSave), pMsg);
 
+  // space on the node: contacts it hasn't heard from lately can come off it and stay here
+  const days = mk("input", {type: "number", min: 1, max: 365, value: store.get("purge_days") || "7", style: "width:80px"});
+  const spaceMsg = mk("div", {className: "err"});
+  const onNode = [...S.nodes.values()].filter(n => n.saved);
+  const talked = new Set([...S.msgs.values()].filter(m => m.kind === "dm").map(m => m.peer));  // people you have messaged stay
+  const take = button("Take them off the node", () => withBusy(take, async () => {
+    const list = onNode.filter(n => (!heard(n) || now() - heard(n) > Number(days.value) * DAY) && ![...talked].some(p => n.key.startsWith(p)));
+    if (!list.length) return say(spaceMsg, {ok: true}, "Nothing to take off: every contact was heard in that time.");
+    if (!confirm(`Take ${list.length} contact${list.length === 1 ? "" : "s"} off the node? They stay on this page and can be added back.`)) return;
+    store.set("purge_days", days.value);
+    const r = await call("/api/node/purge", {keys: list.map(n => n.key)});
+    say(spaceMsg, r, `Took ${r.body.removed} off the node.`);
+  }));
+  const auto = mk("input", {type: "checkbox", checked: cfg.values.auto_purge}), high = mk("input", {type: "number", min: 51, max: 99, value: cfg.values.purge_high, style: "width:70px"}),
+    low = mk("input", {type: "number", min: 50, max: 98, value: cfg.values.purge_low, style: "width:70px"}), autoMsg = mk("div", {className: "err"});
+  const autoSave = button("Save", () => withBusy(autoSave, async () => {
+    const r = await call("/api/autopurge", {enabled: auto.checked, high: Number(high.value), low: Number(low.value)});
+    say(autoMsg, r, "Saved."); if (r.ok) editing = false;
+  }));
+  box.append(mk("h3", {textContent: "Space on the node"}),
+    kv([["Contacts on the node", S.me.max_contacts ? `${onNode.length} of ${S.me.max_contacts}` : String(onNode.length)]]),
+    mk("div", {className: "hint", textContent: "A contact taken off the node is kept on this page (its key, position and last route), grey until it is heard again, and can be added back from the map or the Nodes list."}),
+    fld("Take off the node the contacts not heard for this many days", days, "People you have messaged are left alone. With 'Ask before saving' off, the node saves a contact again whenever it advertises."),
+    mk("div", {className: "btns"}, take), spaceMsg,
+    mk("label", {className: "fld"}, auto, " Take contacts off the node by itself when it is nearly full",
+      mk("div", {className: "hint", textContent: "Starts at the first percentage and stops at the second, taking off the contacts it has heard from least recently. Favourites, people you have messaged and nodes you added by hand this week stay. They are all kept here."})),
+    fld("Start when the node is this full (%)", high), fld("Stop when it is down to (%)", low), mk("div", {className: "btns"}, autoSave), autoMsg);
+
   // contact links
   const link = mk("input", {type: "text", readOnly: true, placeholder: "meshcore://..."}), imp = mk("input", {type: "text", placeholder: "Paste a meshcore:// link", autocomplete: "off", spellcheck: false});
   const lMsg = mk("div", {className: "err"});

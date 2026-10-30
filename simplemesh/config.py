@@ -25,6 +25,9 @@ class Config:
     map_cache_mb: int = 500
     home_lat: float = 0.0    # where the map starts when nothing on it has a position; 0, 0 = unset
     home_lon: float = 0.0
+    auto_purge: bool = True  # take contacts off the node when its contact list is nearly full (they are kept here)
+    purge_high: int = 90     # percent full that starts it...
+    purge_low: int = 75      # ...and where it stops
 
     @classmethod
     def load(cls) -> "Config":

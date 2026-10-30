@@ -25,7 +25,8 @@
   header h1 { margin: 0; font-size: 15px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); flex: none; }
   .dot.on { background: var(--ok); }
-  #status, #radio { color: var(--dim); font-size: 13px; }
+  #status, #radio, #contacts { color: var(--dim); font-size: 13px; }
+  #contacts.nearly { color: var(--bad); font-weight: 600; }
   .grow { flex: 1; }
   #notice { position: fixed; z-index: 20; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: min(480px, 92vw);
             background: #fff3cd; color: #5b4500; padding: 6px 12px; border-radius: 6px; font-size: 13px; box-shadow: 0 2px 8px #0004; }
@@ -171,7 +172,7 @@
     <button class="act" id="advert" disabled title="Announce this node to the nodes that can hear it directly">Advertise</button>
     <button class="ghost" id="logout">Log out</button>
   </div>
-  <div class="row"><span id="radio"></span><span class="grow"></span><span id="battery"></span></div>
+  <div class="row"><span id="radio"></span><span class="grow"></span><span id="contacts" title="Contacts saved on the node, of how many it holds"></span><span id="battery"></span></div>
 </header>
 <div id="notice" hidden></div>
 <main>

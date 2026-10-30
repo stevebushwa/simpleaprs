@@ -111,7 +111,10 @@ class Store:
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 tmp = path.with_suffix(".tmp")
-                tmp.write_text(text)
+                with open(tmp, "w") as f:  # on disk before it replaces the old file, so a power cut leaves one or the other
+                    f.write(text)
+                    f.flush()
+                    os.fsync(f.fileno())
                 os.replace(tmp, path)
             except OSError:
                 self._dirty = True

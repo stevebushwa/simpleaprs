@@ -219,10 +219,80 @@ def test_advertising_and_profile(rig):
 def test_removing_a_node_and_forgetting_its_route(rig):
     rig.node.reset_path(ANNA["public_key"])
     until(lambda: next(n for n in rig.intro("nodes") if n["name"] == "Anna")["hops"] == -1, "the route to be forgotten")
-    rig.node.remove_node(ANNA["public_key"])
+    rig.node.remove_node(ANNA["public_key"], forget=True)
     assert not any(n["name"] == "Anna" for n in rig.intro("nodes"))
     assert ANNA["public_key"] not in rig.fake.contacts
     assert {"gone": [ANNA["public_key"]]} in rig.events()
+
+
+def anna(rig):
+    return next(n for n in rig.intro("nodes") if n["name"] == "Anna")
+
+
+def test_a_route_the_node_learned_is_remembered_and_can_be_given_back(rig):
+    a = anna(rig)
+    assert (a["last_hops"], a["last_path"], a["last_hash"]) == (1, "ab", 1) and abs(a["last_path_at"] - time.time()) < 5
+    rig.node.reset_path(ANNA["public_key"])  # the node gives up on a route after failed sends
+    until(lambda: anna(rig)["hops"] == -1, "the route to be forgotten")
+    a = anna(rig)
+    assert (a["last_hops"], a["last_path"]) == (1, "ab")  # but we kept it
+    rig.node.restore_route(ANNA["public_key"])
+    assert ("set_path", ANNA["public_key"], "ab", 0) in rig.fake.commands.sent
+    until(lambda: anna(rig)["hops"] == 1, "the route to be back")
+    assert next(n for n in rig.intro("nodes") if n["name"] == "Hilltop")["last_hops"] == 0  # a direct neighbour is remembered too
+    with pytest.raises(MeshError, match="remembered"):
+        rig.node.restore_route(ROOM["public_key"])  # it never had one
+
+
+def test_a_node_taken_off_the_node_is_kept_here_and_comes_back_with_its_route(rig):
+    rig.node.remove_node(ANNA["public_key"])
+    a = anna(rig)
+    assert not a["saved"] and a["hops"] == -1 and a["lat"] == 30.01 and a["last_path"] == "ab"
+    assert ANNA["public_key"] not in rig.fake.contacts
+    rig.node.add_node(ANNA["public_key"])
+    until(lambda: anna(rig)["saved"], "it to be saved again")
+    back = rig.fake.contacts[ANNA["public_key"]]
+    assert (back["out_path_len"], back["out_path"], back["out_path_hash_mode"]) == (1, "ab", 0)  # on the route it had
+
+
+def test_taking_contacts_off_the_node_to_free_space(rig):
+    unknown = "f" * 64
+    assert rig.node.purge_nodes([ANNA["public_key"], HILL["public_key"], unknown, ANNA["public_key"]]) == 2
+    nodes = {n["name"]: n for n in rig.intro("nodes")}
+    assert not nodes["Anna"]["saved"] and not nodes["Hilltop"]["saved"] and nodes["Ranger Room"]["saved"]
+    assert set(rig.fake.contacts) == {ROOM["public_key"]}
+    assert nodes["Anna"]["lat"] == 30.01 and nodes["Hilltop"]["last_hops"] == 0  # all of it is still here
+    assert rig.node.purge_nodes([ANNA["public_key"]]) == 0  # already off the node
+
+
+def test_a_full_sync_marks_what_the_node_forgot_without_losing_it(rig):
+    rig.fake.contacts.pop(ANNA["public_key"])  # the node lost it (a flash wipe, or it overwrote the oldest)
+    asyncio.run_coroutine_threadsafe(rig.node._sync_contacts(True), rig.node.loop).result(5)
+    a = anna(rig)
+    assert not a["saved"] and a["lat"] == 30.01 and a["last_path"] == "ab"
+
+
+def test_the_page_is_told_when_the_node_connected_and_how_big_its_contact_list_is(rig):
+    assert abs(rig.intro("status")["since"] - time.time()) < 10  # nodes not heard since then show grey
+    assert rig.intro("self")["max_contacts"] == 350
+
+
+def test_an_advert_says_how_many_hops_away_it_came_from(rig):
+    key = key_for("Far Repeater")
+    rig.emit(EventType.RX_LOG_DATA, advert("Far Repeater", key, path_len=4))
+    assert next(n for n in rig.intro("nodes") if n["key"] == key)["heard_hops"] == 4  # its SNR is the last hop's, not its own
+    rig.emit(EventType.RX_LOG_DATA, advert("Far Repeater", key, path_len=0))
+    assert next(n for n in rig.intro("nodes") if n["key"] == key)["heard_hops"] == 0
+
+
+def test_a_route_request_waits_long_enough_and_says_why_it_may_fail(rig):
+    assert rig.node.remote.route(ANNA["public_key"])["out_path"] == "ab"
+    assert rig.fake.commands.route_timeout >= 25  # the node's own estimate is a few seconds: far nodes need more
+    rig.fake.commands.silent = True
+    with pytest.raises(MeshError, match="logged in"):  # repeaters answer a route request from someone they know
+        rig.node.remote.route(HILL["public_key"])
+    with pytest.raises(MeshError, match="out of range or offline"):
+        rig.node.remote.route(ANNA["public_key"])
 
 
 def test_a_full_contact_list_is_reported(rig):
@@ -399,7 +469,7 @@ def test_the_page_needs_a_login(web):
     assert st == 302 and ("Location", "/login") in hdr
     for path in ("/api/settings", "/style.json", "/web/events", "/mesh.js", "/api/account"):
         assert call(web, "GET", path)[0] == 401, path
-    for path in ("/api/send", "/api/advert", "/api/profile", "/api/node/add", "/api/settings"):
+    for path in ("/api/send", "/api/advert", "/api/profile", "/api/node/add", "/api/node/purge", "/api/node/restore-route", "/api/settings"):
         assert call(web, "POST", path, {})[0] == 401, path
     assert web.fake.commands.sent.count(("advert", False)) == 0
     st, page, _ = call(web, "GET", "/login")
@@ -436,9 +506,11 @@ def test_bad_requests_are_refused(web):
     for body in ({}, {"kind": "carrier-pigeon"}, {"kind": "chan"}, {"kind": "chan", "chan": "x", "text": "a"},
                  {"kind": "dm", "to": "xyz", "text": "a"}, {"kind": "dm", "to": "../../etc", "text": "a"}):
         assert call(web, "POST", "/api/send", body, cookie)[0] == 400, body
-    for path in ("/api/node/add", "/api/node/remove", "/api/node/reset-path"):
+    for path in ("/api/node/add", "/api/node/remove", "/api/node/reset-path", "/api/node/restore-route"):
         assert call(web, "POST", path, {"key": "short"}, cookie)[0] == 400
         assert call(web, "POST", path, {"key": "g" * 64}, cookie)[0] == 400
+    for body in ({}, {"keys": "x"}, {"keys": ["short"]}, {"keys": [1]}):
+        assert call(web, "POST", "/api/node/purge", body, cookie)[0] == 400, body
     assert call(web, "POST", "/api/profile", {"name": "a"}, cookie)[0] == 400
     assert call(web, "POST", "/api/forget-inactive", {}, cookie)[0] == 404  # simpleaprs's, not ours
 
@@ -544,3 +616,81 @@ def test_served_over_https_with_a_certificate_to_install(tmp_path, monkeypatch):
     finally:
         srv.stop()
         r.node.stop()
+
+
+def test_contacts_can_be_taken_off_the_node_over_http(web):
+    cookie = login(web)
+    st, data, _ = call(web, "POST", "/api/node/purge", {"keys": [ANNA["public_key"], "e" * 64]}, cookie)
+    assert st == 200 and data == {"removed": 1}
+    st, _, _ = call(web, "POST", "/api/node/remove", {"key": HILL["public_key"], "forget": True}, cookie)
+    assert st == 200 and web.store.node(HILL["public_key"]) is None
+    assert call(web, "POST", "/api/node/restore-route", {"key": ROOM["public_key"]}, cookie)[0] == 409  # no route was ever remembered
+
+
+def crowded(tmp_path, **cfg):
+    """A node that holds 10 contacts and has 10: Anna, Hilltop, the room (a favourite) and seven more, heard 1 to 7 days ago."""
+    fake = FakeMesh("Pi Node", 30.0, -97.0)
+    fake.commands.max_contacts = 10
+    rig = Rig(tmp_path, fake=fake)
+    for k, v in cfg.items():
+        setattr(rig.cfg, k, v)
+    others = [contact(f"N{i}", 2) for i in range(7)]
+    for c in others:
+        fake.contacts[c["public_key"]] = dict(c)
+    fake.contacts[ROOM["public_key"]]["flags"] = 1  # a favourite
+    now = time.time()
+    for i, c in enumerate(others):
+        rig.store.put_node(c["public_key"], {"heard": now - (i + 1) * 86400})
+    rig.store.put_node(HILL["public_key"], {"heard": now - 100 * 86400})  # the one not heard from longest (the room never was)
+    rig.store.add_message({"id": "m1", "kind": "dm", "peer": ANNA["public_key"][:12], "dir": "out", "text": "hi", "ts": now})  # Anna was messaged
+    return rig, others
+
+
+def test_a_nearly_full_node_is_tidied_by_itself(tmp_path):
+    rig, others = crowded(tmp_path)
+    rig.connect()
+    try:
+        until(lambda: len(rig.fake.contacts) == 7, "the node to be tidied")
+        # 10 of 10 is over 90%: down to 75% (7), the least recently heard first; the favourite and the one messaged stay
+        gone = {HILL["public_key"], others[6]["public_key"], others[5]["public_key"]}
+        assert set(rig.fake.contacts) == {c["public_key"] for c in [ANNA, ROOM, *others]} - gone
+        for k in gone:  # kept here, off the node
+            n = rig.store.node(k)
+            assert n and not n["saved"] and n["name"]
+        assert any("came off" in e.get("notice", "") and "100%" in e["notice"] for e in rig.events())
+        assert asyncio.run_coroutine_threadsafe(rig.node._auto_purge(), rig.node.loop).result(5) == 0  # not again, and not needed
+    finally:
+        rig.node.stop()
+
+
+def test_the_tidying_can_be_switched_off(tmp_path):
+    rig, _ = crowded(tmp_path, auto_purge=False)
+    rig.connect()
+    try:
+        time.sleep(0.5)
+        assert len(rig.fake.contacts) == 10
+    finally:
+        rig.node.stop()
+
+
+def test_a_contact_added_by_hand_is_left_alone_for_a_while(tmp_path):
+    rig, others = crowded(tmp_path)
+    rig.store.put_node(HILL["public_key"], {"added_at": time.time() - 3600})
+    rig.connect()
+    try:
+        until(lambda: len(rig.fake.contacts) == 7, "the node to be tidied")
+        assert HILL["public_key"] in rig.fake.contacts and others[4]["public_key"] not in rig.fake.contacts
+    finally:
+        rig.node.stop()
+
+
+def test_the_tidying_settings_are_saved_over_http(web):
+    cookie = login(web)
+    st, data, _ = call(web, "GET", "/api/settings", cookie=cookie)
+    assert data["values"]["auto_purge"] is True and (data["values"]["purge_high"], data["values"]["purge_low"]) == (90, 75)
+    assert call(web, "POST", "/api/autopurge", {"enabled": False, "high": 80, "low": 60}, cookie)[0] == 200
+    st, data, _ = call(web, "GET", "/api/settings", cookie=cookie)
+    assert data["values"]["auto_purge"] is False and (data["values"]["purge_high"], data["values"]["purge_low"]) == (80, 60)
+    for body in ({"enabled": True, "high": 60, "low": 80}, {"enabled": True, "high": 100, "low": 50}, {"enabled": True, "high": 90, "low": 40}):
+        assert call(web, "POST", "/api/autopurge", body, cookie)[0] == 409, body
+    assert call(web, "POST", "/api/autopurge", {"enabled": True}, cookie)[0] == 400

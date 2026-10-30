@@ -43,6 +43,7 @@ class FakeCommands:
         self.password = "hunter2"        # what a repeater accepts at login ("" lets guests in)
         self.replies = dict(CLI_REPLIES)  # what a repeater answers to a command; no entry = no answer
         self.silent = False              # remote nodes never answer
+        self.max_contacts = 350          # how many contacts the node holds
 
     def _answer(self, name: str, payload=None, kind=EventType.OK) -> Event:
         self.sent.append((name,))
@@ -51,7 +52,7 @@ class FakeCommands:
         return Event(kind, payload or {})
 
     async def send_device_query(self):
-        return self._answer("device_query", {"model": "Heltec V3", "ver": "v1.9.0", "fw_build": "test", "max_channels": 4},
+        return self._answer("device_query", {"model": "Heltec V3", "ver": "v1.9.0", "fw_build": "test", "max_channels": 4, "max_contacts": self.max_contacts},
                             EventType.DEVICE_INFO)
 
     async def send_appstart(self):
@@ -176,6 +177,7 @@ class FakeCommands:
 
     async def send_path_discovery_sync(self, dst, timeout=0, min_timeout=0):
         self.sent.append(("route", dst["public_key"]))
+        self.route_timeout = timeout  # how long the caller was willing to wait
         if self.silent:
             return None
         return Event(EventType.PATH_RESPONSE, {"pubkey_pre": dst["public_key"][:12], "out_path_len": 1, "out_path_hash_len": 1,
@@ -229,6 +231,12 @@ class FakeCommands:
     async def remove_contact(self, key):
         self.sent.append(("remove", key))
         self.mc.contacts.pop(key, None)
+        return Event(EventType.OK, {})
+
+    async def change_contact_path(self, contact, path, path_hash_mode=None):
+        self.sent.append(("set_path", contact["public_key"], path, path_hash_mode))
+        size = (path_hash_mode or 0) + 1
+        self.mc.contacts[contact["public_key"]].update(out_path=path, out_path_len=len(path) // (2 * size), out_path_hash_mode=path_hash_mode or 0)
         return Event(EventType.OK, {})
 
     async def reset_path(self, key):

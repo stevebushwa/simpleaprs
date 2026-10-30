@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 ADMIN_TYPES = (2, 3, 4)
 REPLY_WAIT_S = 30
+PATH_WAIT_S = 30  # a route request goes out and back over every hop: the node's own estimate is a few seconds, which far nodes overrun
 CALL_WAIT_S = 45
 
 
@@ -105,9 +106,13 @@ class Remote:
     def route(self, key: str) -> dict:
         """The path a message takes to this node and back, found by asking the mesh."""
         async def go() -> dict:
-            res = await self.node.mc.commands.send_path_discovery_sync(self._contact(key, any_type=True))
+            c = self._contact(key, any_type=True)
+            res = await self.node.mc.commands.send_path_discovery_sync(c, timeout=PATH_WAIT_S)
             if res is None or res.type == EventType.ERROR:
-                raise self._error("No route answer: the node may be out of range.")
+                if c.get("type") in ADMIN_TYPES:
+                    raise self._error(f"No answer in {PATH_WAIT_S} seconds. Repeaters, room servers and sensors tend to answer a route "
+                                      "request only from someone logged in to them: log in (Manage) and try again. It may also be out of range.")
+                raise self._error(f"No answer in {PATH_WAIT_S} seconds: it may be out of range or offline, or not accept requests.")
             return res.payload
         return self.node.request(go, CALL_WAIT_S)
 

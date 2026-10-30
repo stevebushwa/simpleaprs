@@ -243,6 +243,16 @@ A node in companion serial mode can't also talk to the phone app, so the page do
   release from GitHub, or from a `-merged.bin` file you pick when the machine has no internet. The page lets go of the
   serial port, runs esptool, and picks the node up again; it works even when the node's firmware isn't answering. nRF52
   boards (RAK4631, T114...) use a different bootloader and aren't handled.
+- **Keeping contacts and routes**: this page remembers every node it hears (key, position, last heard, the last route the
+  node had to it), so nothing is lost when the node forgets a contact or restarts. Nodes show grey on the map and in the list
+  until they have been heard since the node connected (and again after a day of quiet). **Settings > Node > Space on the
+  node** shows how full the node's contact list is and takes contacts it hasn't heard from in N days off the node while keeping
+  them here (**automatic**, on by default: when the node is 90% full it takes off the contacts heard from least recently, down to
+  75%, leaving favourites, people you have messaged and nodes you added by hand this week; the header shows how full it
+  is, red from 80%); a node's popup has **Remove from node** (kept here, grey, can be added back on its old route), **Forget**
+  (drop it here too) and **Use last route** (give the node back a route it lost). **Find route** asks a node for the path
+  to it and back; repeaters, room servers and sensors tend to answer only someone logged in to them. A node's signal shown
+  in its popup is the last hop's unless it was heard direct.
 - **Settings > Alerts**: a card on the map, a chime, a vibration and a notification through the system for each message
   that arrives (the Alerts button at the top turns them on; the choices are per browser). On a phone, install the page as
   an app (Android: browser menu > Install app; iPhone: Share > Add to Home Screen) and the notifications come through the

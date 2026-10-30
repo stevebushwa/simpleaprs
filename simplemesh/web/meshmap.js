@@ -129,7 +129,7 @@ legend.id = "legend";
 const rows = [["#1e6fe8", "Companion"], ["#e08a00", "Repeater"], ["#8a3ffc", "Room server"], ["#1f9d3a", "Sensor"],
               ["#111", "This node"]];
 legend.innerHTML = "<summary>Legend</summary>" + rows.map(([c, t]) => `<div><i class="dot" style="--c:${c}"></i>${t}</div>`).join("") +
-  '<div><i class="dot unsaved" style="--c:#777"></i>Heard, not saved</div><div><i class="dot old" style="--c:#777"></i>Quiet for a day</div>' +
+  '<div><i class="dot unsaved" style="--c:#777"></i>Heard, not saved</div><div><i class="dot old" style="--c:#777"></i>Not heard lately</div>' +
   '<div><i class="line" style="--c:#6a2fd6"></i>Route of the clicked node</div><div><i class="line dashed" style="--c:#6a2fd6"></i>Hop with no known position</div>';
 try { legend.open = localStorage.getItem("legend") !== "closed"; } catch { legend.open = true; }
 legend.addEventListener("toggle", () => { try { localStorage.setItem("legend", legend.open ? "open" : "closed"); } catch {} });

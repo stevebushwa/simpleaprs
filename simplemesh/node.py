@@ -36,6 +36,10 @@ MAX_TEXT = 150            # bytes the firmware takes in one message; a channel m
 HEARTBEAT_S = 30
 CONTACT_RESYNC_S = 900
 RX_BACKLOG = 150
+MAX_MESSAGES_SCAN = 2000  # how far back the messages are looked through for people you have messaged
+PURGE_MAX = 400  # contacts removed from the node in one go
+PURGE_EVERY_S = 300  # the least often the node is tidied by itself
+NEW_CONTACT_S = 7 * 86400  # a contact someone added by hand is left alone this long
 PAUSED = "Paused while the firmware is updated."
 CLOCK_SANE = 1_700_000_000  # a clock before late 2023 hasn't been set
 BANDWIDTHS = (7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125.0, 250.0, 500.0)  # kHz the radio chip can do
@@ -97,6 +101,7 @@ class MeshNode:
         self._self: dict = {}
         self._channels: dict[int, str] = {}
         self._rx: deque[dict] = deque(maxlen=RX_BACKLOG)
+        self._last_purge = 0.0
         self._contacts_changed: asyncio.Event | None = None
         self._lastmod = 0
         self._port = ""
@@ -246,7 +251,7 @@ class MeshNode:
         if info and info.type != EventType.ERROR:
             self._self.update(model=info.payload.get("model", ""), version=info.payload.get("ver", ""),
                               build=info.payload.get("fw_build", ""))
-            self._publish_self(mc.self_info, max_channels=info.payload.get("max_channels", 8))
+            self._publish_self(mc.self_info, max_channels=info.payload.get("max_channels", 8), max_contacts=info.payload.get("max_contacts"))
         if time.time() > CLOCK_SANE:  # the node has no clock of its own; other nodes ignore messages that look old
             await mc.commands.set_time(int(time.time()))
         await self._read_channels(mc)
@@ -255,10 +260,12 @@ class MeshNode:
         await mc.start_auto_message_fetching()
         self._spawn(self._contact_loop())
 
-    def _publish_self(self, si: dict, max_channels: int | None = None) -> None:
+    def _publish_self(self, si: dict, max_channels: int | None = None, max_contacts: int | None = None) -> None:
         with self._lock:
             if max_channels:
                 self._self["max_channels"] = max_channels
+            if max_contacts:
+                self._self["max_contacts"] = max_contacts
             self._self.update({
                 "name": si.get("name", ""), "key": si.get("public_key", ""), "type": si.get("adv_type", 0),
                 "tx_power": si.get("tx_power"), "max_tx_power": si.get("max_tx_power"),
@@ -313,11 +320,16 @@ class MeshNode:
         self._lastmod = res.attributes.get("lastmod", self._lastmod)
         changed = []
         for c in mc.contacts.values():
-            n, did = self._put(c["public_key"], {
+            fields = {
                 "name": c.get("adv_name") or c["public_key"][:8], "type": c.get("type", 0), "saved": True,
                 "hops": c.get("out_path_len", -1), "path": c.get("out_path", ""),
                 "hash_size": max(c.get("out_path_hash_mode", 0), 0) + 1, "advert": c.get("last_advert", 0),
-                **_pos(c.get("adv_lat") or 0, c.get("adv_lon") or 0)})
+                **_pos(c.get("adv_lat") or 0, c.get("adv_lon") or 0)}
+            known = self.store.node(c["public_key"]) or {}
+            if fields["hops"] >= 0:  # a route the node has learned (0: direct): remember it for when it loses it
+                if (known.get("last_hops"), known.get("last_path"), known.get("last_hash")) != (fields["hops"], fields["path"], fields["hash_size"]):
+                    fields.update(last_hops=fields["hops"], last_path=fields["path"], last_hash=fields["hash_size"], last_path_at=time.time())
+            n, did = self._put(c["public_key"], fields)
             if did:
                 changed.append(n)
         if full:  # the node forgot some (or you removed them in another app): keep them as nodes we merely heard
@@ -326,6 +338,7 @@ class MeshNode:
                     changed.append(self.store.put_node(n["key"], {"saved": False}))
         if changed:
             self.hub.publish({"nodes": changed}, keep=False)
+        await self._auto_purge()
 
     def _put(self, key: str, fields: dict) -> tuple[dict, bool]:
         before = self.store.node(key)
@@ -360,6 +373,8 @@ class MeshNode:
                     advert=c.get("last_advert", 0), pending=True, **_pos(c.get("adv_lat") or 0, c.get("adv_lon") or 0))
 
     async def _on_full(self, event) -> None:
+        if await self._auto_purge():
+            return
         self._notice("The node's contact list is full: new nodes can't be saved until you remove some.")
 
     def _notice(self, text: str) -> None:
@@ -436,7 +451,8 @@ class MeshNode:
         if d.get("adv_key"):
             rx["key"] = d["adv_key"]
             rx["name"] = d.get("adv_name", "")
-            fields = {"heard": rx["t"], "snr": d.get("snr"), "rssi": d.get("rssi"), "advert": d.get("adv_timestamp", 0)}
+            fields = {"heard": rx["t"], "snr": d.get("snr"), "rssi": d.get("rssi"), "advert": d.get("adv_timestamp", 0),
+                      "heard_hops": d.get("path_len")}  # the SNR above is of the last hop: the node's own only when this is 0
             if d.get("adv_name"):
                 fields.update(name=d["adv_name"], type=d.get("adv_type", 0))
             if "adv_lat" in d:
@@ -463,6 +479,8 @@ class MeshNode:
 
     def _set_status(self, connected: bool, text: str) -> None:
         with self._lock:
+            if connected and not self._status.get("connected"):
+                self._status["since"] = time.time()  # nodes not heard since then show grey on the page
             self._status.update(connected=connected, text=text, port=self._port)
             if not connected:
                 self._status.update(battery=None, battery_mv=None)
@@ -570,18 +588,23 @@ class MeshNode:
 
         async def go() -> None:
             pending = self.mc.pending_contacts.get(key)
-            c = pending or {"public_key": key, "type": node.get("type", 1), "flags": 0, "out_path_len": -1,
-                            "out_path": "", "out_path_hash_mode": -1, "adv_name": node["name"],
+            last = node.get("last_hops") is not None  # the route it had when the node last knew it
+            c = pending or {"public_key": key, "type": node.get("type", 1), "flags": 0,
+                            "out_path_len": node["last_hops"] if last else -1, "out_path": node.get("last_path", "") if last else "",
+                            "out_path_hash_mode": node.get("last_hash", 1) - 1 if last else -1,
+                            "adv_name": node["name"].encode()[:31].decode(errors="ignore"),  # a contact's name is at most 31 bytes
                             "last_advert": int(node.get("advert") or time.time()),
                             "adv_lat": node.get("lat") or 0.0, "adv_lon": node.get("lon") or 0.0}
             self._ok(await self.mc.commands.add_contact(c), "save that node")
             self.mc.pop_pending_contact(key)
             await self._sync_contacts(full=False)
-            n, _ = self._put(key, {"saved": True, "pending": False})
+            n, _ = self._put(key, {"saved": True, "pending": False, "added_at": time.time()})
             self.hub.publish({"nodes": [n]}, keep=False)
         self.request(go)
 
-    def remove_node(self, key: str) -> None:
+    def remove_node(self, key: str, forget: bool = False) -> None:
+        """Take a node off the node's contact list. It stays here, where its key, position and last route are kept so it can
+        be added back (forget: drop it from here too)."""
         node = self.store.node(key)
         if not node:
             raise MeshError("Unknown node.")
@@ -590,8 +613,72 @@ class MeshNode:
             if node.get("saved"):
                 self._ok(await self.mc.commands.remove_contact(key), "remove that node")
             self.mc.contacts.pop(key, None)
-            self.store.drop_node(key)
-            self.hub.publish({"gone": [key]}, keep=False)
+            if forget:
+                self.store.drop_node(key)
+                self.hub.publish({"gone": [key]}, keep=False)
+            else:
+                n, _ = self._put(key, {"saved": False, "hops": -1, "path": ""})
+                self.hub.publish({"nodes": [n]}, keep=False)
+        self.request(go)
+
+    def purge_nodes(self, keys: list[str]) -> int:
+        """Free space on the node: remove these contacts from it (the ones it has), keeping all of them here."""
+        keys = [k for k in dict.fromkeys(keys) if (self.store.node(k) or {}).get("saved")][:PURGE_MAX]
+        if not keys:
+            return 0
+
+        return self.request(lambda: self._take_off(keys), 20 + len(keys))
+
+    async def _take_off(self, keys: list[str]) -> int:
+        done = []
+        for k in keys:
+            res = await self.mc.commands.remove_contact(k)
+            if res is None or res.type == EventType.ERROR:
+                continue
+            self.mc.contacts.pop(k, None)
+            done.append(self._put(k, {"saved": False, "hops": -1, "path": ""})[0])
+        if done:
+            self.hub.publish({"nodes": done}, keep=False)
+        return len(done)
+
+    async def _auto_purge(self) -> int:
+        """When the node's contact list is nearly full, take off the contacts it has heard from least recently, down to the
+        low mark. Favourites, anyone you have messaged and contacts added by hand lately stay. Everything is kept here."""
+        cfg, cap = self.cfg, int(self._self.get("max_contacts") or 0)
+        if not (cfg.auto_purge and cap and self.mc) or time.time() - self._last_purge < PURGE_EVERY_S:
+            return 0
+        used = len(self.mc.contacts)
+        if used < cap * cfg.purge_high / 100:
+            return 0
+        talked = {m["peer"] for m in self.store.recent_messages(MAX_MESSAGES_SCAN) if m.get("kind") == "dm"}
+        now = time.time()
+
+        def spare(k: str, c: dict) -> bool:
+            return bool(c.get("flags", 0) & 1) or any(k.startswith(p) for p in talked) or now - (self.store.node(k) or {}).get("added_at", 0) < NEW_CONTACT_S
+        pool = sorted((k for k, c in self.mc.contacts.items() if not spare(k, c)), key=lambda k: (self.store.node(k) or {}).get("heard") or 0)
+        take = pool[:max(0, used - int(cap * cfg.purge_low / 100))]
+        if not take:
+            return 0
+        self._last_purge = now
+        n = await self._take_off(take)
+        if n:
+            self._notice(f"The node's contact list was {used * 100 // cap}% full, so the {n} contacts it had heard from least recently came "
+                         "off it. They are kept here, grey, and can be added back.")
+        return n
+
+    def restore_route(self, key: str) -> None:
+        """Give the node back the route it used to have to a contact (it has lost it, or reset it after failed sends)."""
+        node = self.store.node(key)
+        if not node or node.get("last_hops") is None:
+            raise MeshError("No earlier route to that node is remembered.")
+
+        async def go() -> None:
+            c = self.mc.contacts.get(key)
+            if not c:
+                raise MeshError("Your node doesn't have that contact right now. Add it first.")
+            self._ok(await self.mc.commands.change_contact_path(c, node.get("last_path", ""), path_hash_mode=node.get("last_hash", 1) - 1),
+                     "set that route")
+            await self._sync_contacts(full=False)
         self.request(go)
 
     def reset_path(self, key: str) -> None:
