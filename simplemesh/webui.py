@@ -29,6 +29,7 @@ class MeshWeb(BaseWebUI):
     def __init__(self, hub: Hub, node: MeshNode, proxy: MapProxy, auth, cfg: Config) -> None:
         super().__init__(hub, proxy, auth)
         self.node, self.cfg = node, cfg
+        self.cert_file: Path | None = None  # the certificate the page is served with over https, for installing on a device
         routes = {"/api/send": self._send, "/api/advert": self._advert, "/api/profile": self._profile,
                   "/api/node/add": self._node_add, "/api/node/remove": self._node_remove,
                   "/api/node/reset-path": self._node_reset, "/api/settings": self._save_settings,
@@ -58,9 +59,13 @@ class MeshWeb(BaseWebUI):
         return self.node.intro()
 
     def get(self, h, path: str) -> bool:
-        if path != "/api/settings":
+        if path == "/api/certificate" and self.cert_file and self.cert_file.is_file():
+            h.reply(200, self.cert_file.read_text(), "application/x-x509-ca-cert",
+                    headers=(("Content-Disposition", 'attachment; filename="simplemesh.crt"'),))
+        elif path == "/api/settings":
+            h.reply(200, self.settings_view())
+        else:
             return False
-        h.reply(200, self.settings_view())
         return True
 
     def settings_view(self) -> dict:

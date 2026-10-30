@@ -3,6 +3,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>simplemesh</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2b1d5c">
 <link rel="stylesheet" href="maplibre-gl.css">
 <style>
   :root { --bg: #fff; --fg: #1d1d1f; --dim: #6b6b70; --line: #d8d8dc; --bar: #f3f3f5; --accent: #3367d6; --ok: #2a9d4a; --bad: #c33;
@@ -25,12 +30,18 @@
   #notice { position: fixed; z-index: 20; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: min(480px, 92vw);
             background: #fff3cd; color: #5b4500; padding: 6px 12px; border-radius: 6px; font-size: 13px; box-shadow: 0 2px 8px #0004; }
   #notice[hidden] { display: none; }
-  main { display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
+  main { display: grid; grid-template-columns: 1fr 10px var(--side, 420px); min-height: 0; }
+  main.dragging { user-select: none; }
+  main.dragging #map { pointer-events: none; }
+  #split { position: relative; background: var(--bar); border-left: 1px solid var(--line); cursor: col-resize; touch-action: none; }
+  #split:hover, #split:focus-visible, main.dragging #split { background: var(--line); outline: 0; }
+  #split::after { content: ""; position: absolute; left: 50%; top: 50%; width: 3px; height: 36px; margin: -18px 0 0 -1.5px; border-radius: 2px; background: var(--dim); }
+  #fold { display: none; flex: none; border: 0; border-left: 1px solid var(--line); background: none; color: var(--dim); font: inherit; padding: 0 14px; cursor: pointer; }
   #mapbox { position: relative; min-height: 0; }
   #map { position: absolute; inset: 0; }
   #msg { position: absolute; left: 8px; bottom: 36px; font: 12px sans-serif; color: #1d1d1f; background: #fffd; padding: 3px 6px; border-radius: 4px; }
   #nomap { position: absolute; inset: 0; display: none; place-items: center; color: var(--dim); padding: 20px; text-align: center; }
-  aside { display: flex; flex-direction: column; border-left: 1px solid var(--line); min-height: 0; }
+  aside { display: flex; flex-direction: column; border-left: 1px solid var(--line); min-height: 0; min-width: 0; overflow: hidden; }
   nav { display: flex; border-bottom: 1px solid var(--line); }
   nav button { flex: 1; border: 0; background: none; color: var(--dim); padding: 9px 2px; font: inherit; cursor: pointer; border-bottom: 2px solid transparent; position: relative; }
   nav button.on { color: var(--fg); border-bottom-color: var(--accent); }
@@ -62,12 +73,13 @@
   .b.out { align-self: flex-end; background: var(--mine); color: #fff; border-radius: 12px 12px 3px 12px; }
   .b .who { font-size: 12px; font-weight: 600; color: var(--accent); }
   .b .meta { font-size: 11px; color: var(--dim); margin-top: 1px; }
+  .b .reply { background: none; border: 0; padding: 0 0 0 8px; font: inherit; color: var(--accent); cursor: pointer; }
   .b.out .meta { color: #ffffffb0; }
   .b.failed .meta { color: #ffb4a8; }
   .empty { color: var(--dim); padding: 24px 16px; text-align: center; margin: auto; }
   form.compose { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); align-items: center; }
   form.compose input { flex: 1; min-width: 0; }
-  .count { font-size: 11px; color: var(--dim); min-width: 28px; text-align: right; }
+  .count { font-size: 11px; color: var(--dim); min-width: 44px; text-align: right; }
   .count.over { color: var(--bad); }
   .log { flex: 1; overflow: auto; padding: 4px 10px; font: 12px ui-monospace, monospace; }
   .log div { padding: 2px 0; word-break: break-word; }
@@ -126,8 +138,24 @@
   dialog textarea { width: 100%; font: 12px ui-monospace, monospace; }
   dialog .row, .tab .row { display: flex; gap: 6px; align-items: center; }
   dialog .row input[type=password], dialog .row input[type=text] { flex: 1; min-width: 0; }
+  /* alerts: a card for each message that arrives, top middle of the map */
+  #cards { position: absolute; z-index: 3; top: 8px; left: 50%; transform: translateX(-50%); width: min(360px, 94%); display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+  .card { pointer-events: auto; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 6px 10px; box-shadow: 0 2px 8px #0005; }
+  .card h4 { margin: 0 0 2px; font-size: 13px; display: flex; justify-content: space-between; gap: 8px; }
+  .card h4 span:last-child { color: var(--dim); font-weight: 400; font-size: 12px; }
+  .card .body { font-size: 13px; word-break: break-word; max-height: 4.5em; overflow: hidden; }
+  .card .actions { display: flex; gap: 6px; margin-top: 5px; }
+  button.bell.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   @media (max-width: 800px) {
-    main { grid-template-columns: 1fr; grid-template-rows: 42% 1fr; }
+    /* the sidebar is shut to its tab bar, or open: a button in the tab bar does it (there is no handle to drag) */
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr 60%; }
+    main.shut { grid-template-rows: 1fr auto; }
+    main.shut .tab { display: none; }
+    #split { display: none; }
+    #fold { display: block; }
+    header .row { gap: 6px; }
+    header button, header select { padding: 3px 7px; font-size: 13px; }
+    header label .lbl { display: none; }
     aside { border-left: 0; border-top: 1px solid var(--line); }
   }
 </style>
@@ -136,9 +164,10 @@
     <span class="dot" id="conn"></span><h1 id="title">simplemesh</h1>
     <span id="status">Connecting...</span>
     <span class="grow"></span>
-    <label>Show <select id="filter">
+    <label><span class="lbl">Show </span><select id="filter">
       <option value="all">All nodes</option><option value="1">Companions</option><option value="2">Repeaters</option>
       <option value="3">Room servers</option><option value="4">Sensors</option><option value="saved">Saved only</option></select></label>
+    <button class="ghost bell" id="bell" title="Sound, vibration and a notification when a message arrives">Alerts</button>
     <button class="act" id="advert" disabled title="Announce this node to the nodes that can hear it directly">Advertise</button>
     <button class="ghost" id="logout">Log out</button>
   </div>
@@ -146,7 +175,8 @@
 </header>
 <div id="notice" hidden></div>
 <main>
-  <div id="mapbox"><div id="map"></div><div id="msg"></div><div id="nomap">The map needs WebGL, which this browser isn't providing. Everything else still works.</div></div>
+  <div id="mapbox"><div id="map"></div><div id="msg"></div><div id="nomap">The map needs WebGL, which this browser isn't providing. Everything else still works.</div><div id="cards"></div></div>
+  <div id="split" role="separator" tabindex="0" title="Drag to resize, tap to hide or show"></div>
   <aside>
     <nav>
       <button data-tab="channels" class="on">Channels<span class="badge" id="b-channels" hidden></span></button>
@@ -154,6 +184,7 @@
       <button data-tab="nodes">Nodes</button>
       <button data-tab="packets">Packets</button>
       <button data-tab="settings">Settings</button>
+      <button id="fold" aria-label="Minimize the panel" title="Minimize or expand the panel">&#9662;</button>
     </nav>
     <div class="tab" id="channels">
       <div class="pills" id="chan-pills"></div>

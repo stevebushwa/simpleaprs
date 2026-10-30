@@ -12,6 +12,7 @@ AUTH_PATH = DIR / "auth.json"
 TILES_DIR = Path.home() / ".cache" / "simplemesh" / "tiles"
 NODES_PATH = DIR / "nodes.json"
 MESSAGES_PATH = DIR / "messages.json"
+TLS_DIR = DIR / "tls"  # the certificate the web page is served with over https
 
 
 @dataclass

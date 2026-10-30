@@ -73,6 +73,7 @@ const touch = (...what) => {
   requestAnimationFrame(() => { queued = false; const d = dirty; dirty = new Set(); render(d); });
 };
 
+let synced = false;  // the history the server sends first is not news; what comes after it is
 const apply = ev => {
   if (ev.status) { S.status = ev.status; touch("header"); }
   if (ev.self) { S.me = ev.self; touch("header", "map", "settings"); }
@@ -80,7 +81,11 @@ const apply = ev => {
   if (ev.flash) { S.flash = ev.flash; touch("flash"); }
   if (ev.nodes) { for (const n of ev.nodes) S.nodes.set(n.key, n); touch("nodes", "map", "convs"); }
   if (ev.gone) { for (const k of ev.gone) S.nodes.delete(k); MM.remove(ev.gone); touch("nodes", "convs"); }
-  if (ev.msgs) { for (const m of ev.msgs) S.msgs.set(m.id, m); touch("convs"); }
+  if (ev.msgs) {
+    for (const m of ev.msgs) { const fresh = !S.msgs.has(m.id); S.msgs.set(m.id, m); if (fresh && synced && m.dir === "in") alertFor(m); }
+    touch("convs");
+  }
+  if (ev.sync) synced = true;
   if (ev.rxs) { for (const r of ev.rxs) { S.rxs.push(r); if (S.rxs.length > 400) S.rxs.shift(); } touch("packets"); }
   if (ev.notice) show(ev.notice);
 };
@@ -200,7 +205,15 @@ const bubble = m => {
   } else if (m.status) {
     bits.push({sending: "sending...", sent: "sent", acked: "delivered", failed: "not delivered - no reply from the node"}[m.status] || m.status);
   }
-  b.append(mk("div", {className: "meta", textContent: bits.join("  -  ")}));
+  const meta = mk("div", {className: "meta", textContent: bits.join("  -  ")});
+  if (m.kind === "chan" && m.dir === "in" && m.from) {  // channels have no threads: a reply is a message that names who it answers
+    meta.append(mk("button", {className: "reply", textContent: "Reply", title: "Start a message to " + m.from, onclick: () => {
+      const input = $("chan-text"), tag = `@[${m.from}] `;
+      if (!input.value.startsWith(tag)) input.value = tag + input.value;
+      updateCounts(); input.focus();
+    }}));
+  }
+  b.append(meta);
   return b;
 };
 
@@ -258,7 +271,7 @@ const updateCounts = () => {
   for (const [kind, extra] of [["chan", reserve], ["dm", 0]]) {
     const n = textBytes($(kind + "-text").value), max = MAX_TEXT - extra;
     const c = $(kind + "-count");
-    c.textContent = n > max * 0.6 ? `${n}/${max}` : "";
+    c.textContent = n ? `${n}/${max}` : "";
     c.classList.toggle("over", n > max);
   }
 };
@@ -304,7 +317,11 @@ const renderPackets = () => {
 
 // ---- tabs -------------------------------------------------------------------------------------------------
 const currentTab = () => document.querySelector("nav button.on").dataset.tab;
-const tabTo = name => {
+const tabTo = (name, open = true) => {
+  if (open) {  // picking a tab opens the panel if it was shut
+    if (main.classList.contains("shut")) { store.set("shut", "0"); shut(false); }
+    if (!narrow.matches && sideWidth() === 0) toggleSide();
+  }
   for (const o of document.querySelectorAll("nav button")) o.classList.toggle("on", o.dataset.tab === name);
   for (const t of document.querySelectorAll(".tab")) t.hidden = t.id !== name;
   store.set("tab", name);
@@ -312,14 +329,140 @@ const tabTo = name => {
   if (name === "settings") renderSettings();
   touch("convs");
 };
-for (const b of document.querySelectorAll("nav button")) b.onclick = () => tabTo(b.dataset.tab);
+for (const b of document.querySelectorAll("nav button[data-tab]")) b.onclick = () => tabTo(b.dataset.tab);
 $("advert").onclick = async () => { const r = await act("/api/advert", {flood: false}); if (r.ok) show("Advert sent to the nodes that can hear you directly."); };
 $("logout").onclick = async () => { try { await api("/api/logout", {}); } catch {} toLogin(); };
+
+// ---- the panel beside the map ---------------------------------------------------------------------------------
+// On a computer its edge can be dragged to any width (or tapped to hide it); on a phone it sits under the map and the
+// button in the tab bar shuts it down to the tabs or opens it up again.
+const main = document.querySelector("main"), split = $("split"), fold = $("fold"), narrow = matchMedia("(max-width: 800px)");
+const setSide = (px, save) => {
+  px = Math.max(0, Math.min(Math.round(px), main.clientWidth - split.offsetWidth - 80));
+  main.style.setProperty("--side", px + "px");
+  if (save) store.set("side_w", px);
+  return px;
+};
+const sideWidth = () => document.querySelector("aside").offsetWidth;
+const toggleSide = () => {
+  if (sideWidth() > 0) { store.set("side_prev", sideWidth()); setSide(0, true); }
+  else setSide(+store.get("side_prev") || 420, true);
+};
+split.onpointerdown = e => {
+  e.preventDefault();
+  split.setPointerCapture(e.pointerId);
+  const start = e.clientX, from = sideWidth();
+  let moved = false;
+  main.classList.add("dragging");
+  split.onpointermove = m => {
+    if (Math.abs(m.clientX - start) > 4) moved = true;
+    if (moved) setSide(from - (m.clientX - start), false);
+  };
+  split.onpointerup = split.onpointercancel = () => {
+    split.onpointermove = split.onpointerup = split.onpointercancel = null;
+    main.classList.remove("dragging");
+    if (moved) store.set("side_w", sideWidth()); else toggleSide();
+  };
+};
+split.onkeydown = e => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSide(); }
+  else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); setSide(sideWidth() + (e.key === "ArrowLeft" ? 40 : -40), true); }
+};
+if (store.get("side_w") !== null) setSide(+store.get("side_w"), false);
+addEventListener("resize", () => { if (store.get("side_w") !== null) setSide(+store.get("side_w"), false); });
+const shut = on => {
+  main.classList.toggle("shut", on);
+  fold.innerHTML = on ? "&#9652;" : "&#9662;";
+  fold.setAttribute("aria-label", on ? "Open the panel" : "Minimize the panel");
+};
+shut(store.get("shut") === "1");
+fold.onclick = () => { const on = !main.classList.contains("shut"); store.set("shut", on ? "1" : "0"); shut(on); };
+new ResizeObserver(() => MM.resize()).observe($("mapbox"));  // the map follows the panel as it grows and shrinks
+
+// ---- alerts ----------------------------------------------------------------------------------------------------
+// A message that arrives gets a card on the map and, with the bell on, a chime, a vibration and (if this page isn't the
+// one in front) a notification through the system, which a phone shows too once the page is installed as an app. These
+// are this browser's own choices (Settings > Alerts), since a phone and a computer want different things.
+const prefs = {card: true, chime: true, vibrate: true, notify: true, channels: true, direct: true};
+try { Object.assign(prefs, JSON.parse(store.get("alertPrefs") || "{}")); } catch {}
+const setPref = (key, on) => { prefs[key] = on; store.set("alertPrefs", JSON.stringify(prefs)); };
+let bell = store.get("bell") === "on", audio = null, lastChime = 0, worker = null;
+const unlockAudio = () => { try { audio ??= new AudioContext(); audio.resume(); } catch {} };
+const chime = () => {
+  if (Date.now() - lastChime < 1500) return;  // a batch of missed messages is one chime, not a burst
+  lastChime = Date.now(); unlockAudio();
+  try {
+    const t = audio.currentTime;
+    [[880, 0], [1175, 0.18]].forEach(([hz, at]) => {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.value = hz; o.connect(g).connect(audio.destination);
+      g.gain.setValueAtTime(0.0001, t + at); g.gain.exponentialRampToValueAtTime(0.3, t + at + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.4);
+      o.start(t + at); o.stop(t + at + 0.45);
+    });
+  } catch {}
+};
+const notifyProblem = () => !("Notification" in window) ? "this browser has no notifications"
+  : !window.isSecureContext ? "browsers only allow notifications on https pages (or localhost)"
+  : Notification.permission === "denied" ? "notifications are blocked for this site in the browser's settings" : "";
+const notify = async (title, body, tag, force = false) => {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (!force && document.visibilityState === "visible" && document.hasFocus()) return;  // the card and chime are enough while it's in front
+  const opts = {body, tag, icon: "/icon-192.png", vibrate: [200, 100, 200]};  // a tag of its own: two messages are two notifications, not one replacing the other
+  worker ??= ("serviceWorker" in navigator && window.isSecureContext)
+    ? navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).catch(() => null) : Promise.resolve(null);
+  try { const reg = await worker; if (reg) await reg.showNotification(title, opts); else new Notification(title, opts); } catch {}
+};
+const setBell = on => {
+  bell = on; store.set("bell", on ? "on" : "off");
+  $("bell").textContent = on ? "Alerts on" : "Alerts"; $("bell").classList.toggle("on", on);
+  if (document.querySelector("nav button.on")) touch("settings");  // (not before the page has started)
+};
+const askNotifications = async () => {
+  if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission().catch(() => {});
+  touch("settings");
+};
+$("bell").onclick = async () => {
+  if (bell) return setBell(false);
+  unlockAudio(); chime(); navigator.vibrate?.(150);  // a taste of it, and the tap the browser wants before it allows either
+  setBell(true);
+  if (prefs.notify) await askNotifications();
+  const why = prefs.notify ? notifyProblem() : "";
+  show(why ? `Alerts on: sound and vibration only (${why})` : "Alerts on");
+};
+setBell(bell);
+if (bell) document.addEventListener("pointerdown", unlockAudio, {once: true});  // a reload needs a touch before the browser lets it make sound
+const chanName = idx => (S.channels.find(c => c.idx === idx) || {}).name || "channel " + idx;
+const describe = m => m.kind === "chan"
+  ? {title: `${m.from || "Someone"} in ${chanName(m.chan)}`, body: m.text}
+  : {title: `Message from ${m.from || peerName(m.peer)}`, body: m.text};
+const onScreen = m => document.visibilityState === "visible" && document.hasFocus() && !main.classList.contains("shut")
+  && currentTab() === (m.kind === "chan" ? "channels" : "direct") && view[m.kind === "chan" ? "chan" : "dm"] === convOf(m);
+const showCard = (m, d) => {
+  const card = mk("div", {className: "card"});
+  const reply = mk("button", {className: "act small", textContent: "Reply", onclick: () => {
+    if (m.kind === "chan") { view.chan = convOf(m); tabTo("channels"); touch("convs"); const i = $("chan-text"), tag = m.from ? `@[${m.from}] ` : ""; if (tag && !i.value.startsWith(tag)) i.value = tag + i.value; updateCounts(); i.focus(); }
+    else openDm(m.peer);
+    card.remove();
+  }});
+  card.append(mk("h4", {}, mk("span", {textContent: d.title}), mk("span", {textContent: stamp(now())})), mk("div", {className: "body", textContent: d.body}),
+              mk("div", {className: "actions"}, reply, mk("button", {className: "ghost small", textContent: "Dismiss", onclick: () => card.remove()})));
+  $("cards").prepend(card);
+  while ($("cards").childElementCount > 5) $("cards").lastChild.remove();  // the rest are in the conversations
+};
+const alertFor = m => {
+  if (!(m.kind === "chan" ? prefs.channels : prefs.direct) || onScreen(m)) return;
+  const d = describe(m);
+  if (prefs.card) showCard(m, d);
+  if (!bell) return;
+  if (prefs.chime) chime();
+  if (prefs.vibrate) navigator.vibrate?.([200, 100, 200]);
+  if (prefs.notify) notify(d.title, d.body, "msg-" + m.id);
+};
 
 // ---- start ------------------------------------------------------------------------------------------------
 // (once manage.js has loaded too: the settings tab and the dialogs live there)
 const boot = () => {
-  tabTo(["channels", "direct", "nodes", "packets", "settings"].includes(store.get("tab")) ? store.get("tab") : "channels");
+  tabTo(["channels", "direct", "nodes", "packets", "settings"].includes(store.get("tab")) ? store.get("tab") : "channels", false);
   api("/api/settings").then(r => { S.home = r.body.home; touch("map"); }).catch(() => {});
   const connect = () => {
     const es = new EventSource("/web/events");

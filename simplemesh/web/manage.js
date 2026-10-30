@@ -1,7 +1,7 @@
 // simplemesh page, part two: managing the node (the Settings tab), reaching other nodes (the admin dialog) and updating
 // firmware. Loaded after mesh.js, which starts the page once the document is ready and calls into here.
 // Everything that came off the air is put on the page with textContent only.
-const SECTIONS = [["node", "Node"], ["radio", "Radio"], ["channels", "Channels"], ["firmware", "Firmware"], ["connection", "Connection"]];
+const SECTIONS = [["node", "Node"], ["radio", "Radio"], ["channels", "Channels"], ["firmware", "Firmware"], ["alerts", "Alerts"], ["connection", "Connection"]];
 let pane = SECTIONS.some(s => s[0] === store.get("pane")) ? store.get("pane") : "node";
 let editing = false;   // someone is typing in a settings form: don't redraw it under them
 let fw = {};           // handles on the live parts of the firmware section
@@ -44,7 +44,7 @@ const renderSettings = async () => {
   S.home = cfg.home;
   const pills = mk("div", {className: "pills sub"}, ...SECTIONS.map(([id, label]) =>
     mk("button", {className: id === pane ? "on" : "", textContent: label, onclick: () => { pane = id; store.set("pane", id); renderSettings(); }})));
-  const draw = {node: secNode, radio: secRadio, channels: secChannels, firmware: secFirmware, connection: secConnection}[pane];
+  const draw = {node: secNode, radio: secRadio, channels: secChannels, firmware: secFirmware, alerts: secAlerts, connection: secConnection}[pane];
   fw = {};
   root.replaceChildren(pills, draw(cfg));
   updateFlash();
@@ -225,6 +225,10 @@ const secConnection = cfg => {
   const saveConn = button("Save", async () => { const r = await call("/api/settings", {serial_port: port.value, baud: Number(baud.value), nomad_url: url.value}); say(connMsg, r, "Saved."); }, "act");
   const cur = mk("input", {type: "password", autocomplete: "current-password"}), nw = mk("input", {type: "password", autocomplete: "new-password"});
   const accMsg = mk("div", {className: "err"});
+  const certBox = location.protocol !== "https:" ? [] : [
+    mk("h3", {textContent: "Certificate"}),
+    mk("div", {className: "hint", textContent: "This page is served with a certificate the server made for itself, which is why browsers warn about it. Install it on a device and that device stops warning and lets the page send notifications and be installed as an app. Android: Settings > Security > Install a certificate > CA certificate. iPhone: open the file, install the profile, then turn it on under Settings > General > About > Certificate Trust Settings. Computer: open the file and add it to the trusted certificates."}),
+    mk("div", {className: "btns"}, button("Download certificate", () => { location.href = "/api/certificate"; }))];
   return mk("div", {}, mk("h3", {textContent: "Connection"}),
     fld("Serial port", port, "Where the node is plugged in. The Pi's own UART pins (/dev/serial0) are only listed here, never guessed."),
     fld("Baud rate", baud), fld("Map server", url, "Project N.O.M.A.D., e.g. http://localhost:8080. Blank: no map, just the node list."),
@@ -232,7 +236,34 @@ const secConnection = cfg => {
     mk("h3", {textContent: "Access"}), fld("Current password", cur), fld("New password (8 or more characters)", nw),
     mk("div", {className: "btns"},
       button("Change password", async () => { const r = await call("/api/account/password", {current: cur.value, new: nw.value}); say(accMsg, r, "Changed."); if (r.ok) { cur.value = ""; nw.value = ""; } }),
-      button("Log out everywhere", async () => { await call("/api/account/logout-all", {}); toLogin(); }, "ghost danger")), accMsg);
+      button("Log out everywhere", async () => { await call("/api/account/logout-all", {}); toLogin(); }, "ghost danger")), accMsg,
+    ...certBox);
+};
+
+// ---- settings: alerts ---------------------------------------------------------------------------------------
+// The choices are this browser's own (see mesh.js): a phone and a computer want different things, so nothing here is saved on the server.
+const secAlerts = () => {
+  const check = (label, key) => {
+    const cb = mk("input", {type: "checkbox", checked: !!prefs[key], onchange: async () => { setPref(key, cb.checked); if (key === "notify" && cb.checked) await askNotifications(); }});
+    return mk("div", {className: "fld"}, mk("label", {}, cb, " " + label));
+  };
+  const why = prefs.notify ? notifyProblem() : "";
+  const perm = !("Notification" in window) ? "not available" : Notification.permission === "default" ? "not asked yet" : Notification.permission;
+  const secure = location.protocol === "https:";
+  return mk("div", {}, mk("h3", {textContent: "Alerts"}),
+    mk("div", {className: "hint", textContent: "These apply to this browser only. A card on the map shows for each message that arrives; the Alerts button at the top adds a chime, a vibration and a notification."}),
+    check("Channel messages", "channels"), check("Direct messages", "direct"), check("Show a card on the map", "card"),
+    check("Play a chime", "chime"), check("Vibrate", "vibrate"), check("Send a notification when this page isn't in front", "notify"),
+    mk("div", {className: "hint", textContent: `Notifications: ${perm}.${why ? " Off because " + why + (secure ? "." : " (this page is on plain http)."): ""}`}),
+    mk("div", {className: "btns"}, button("Send a test", () => {
+      const m = {kind: "dm", from: "Test", peer: "", text: "This is what an alert looks like."};
+      if (prefs.card) showCard(m, describe(m));
+      if (prefs.chime) chime();
+      if (prefs.vibrate) navigator.vibrate?.([200, 100, 200]);
+      if (prefs.notify) notify("Test", m.text, "test", true);  // shown even with this page in front, so you can see what it looks like
+    })),
+    mk("h3", {textContent: "On a phone"}),
+    mk("div", {className: "hint", textContent: "Install this page as an app and its notifications come through the phone's own notification system. Android: the browser menu, Install app. iPhone: Share, Add to Home Screen, then open it from the home screen (notifications there need iOS 16.4 or later). Both need the page open over https with the certificate installed (Connection). While the app is closed, nothing arrives: that would need push notifications from a server on the internet."}));
 };
 
 // ---- settings: firmware -------------------------------------------------------------------------------------

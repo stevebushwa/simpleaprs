@@ -11,7 +11,9 @@ from pathlib import Path
 EPILOG = """\
 Serves a web page for a MeshCore companion node plugged into this machine over USB serial: nodes on a map (from
 Project N.O.M.A.D., so it works offline), channels, direct messages, the radio's packet log, and the node's
-radio, channel and firmware settings, plus logging in to repeaters and room servers. The first visit creates your login. Everything else is on the page's Settings tab. Keep it on a LAN or VPN: it is plain HTTP.
+radio, channel and firmware settings, plus logging in to repeaters and room servers. The first visit creates your login. Everything else is on the page's Settings tab.
+It is served over https with a certificate the server makes for itself (install it on a device to stop the browser warning
+and to allow notifications); --http serves plain HTTP instead. Keep it on a LAN or VPN.
 Options apply to this run only, unless --save is given.
 """
 
@@ -29,15 +31,17 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--list-ports", action="store_true", help="print the serial devices that could be the node, and exit")
     ap.add_argument("--demo", action="store_true", help="no radio: a made-up mesh, to look at the page (nothing is saved)")
     ap.add_argument("--demo-at", metavar="LAT,LON", help="(with --demo) where the made-up mesh is (default: --home, else the middle of the US)")
+    ap.add_argument("--http", action="store_true", help="serve plain http, not https (browsers only allow notifications and installing the page as an app on https)")
     ap.add_argument("--allow-host", action="append", default=[], metavar="NAME",
                     help="also accept requests addressed to this host name (the server refuses names that don't look like "
                          "a LAN machine); can be repeated")
     return ap.parse_args(argv)
 
 
-def run(cfg, demo: bool, allowed: tuple[str, ...], demo_at: tuple[float, float] | None = None) -> int:
+def run(cfg, demo: bool, allowed: tuple[str, ...], demo_at: tuple[float, float] | None = None, tls: bool = True) -> int:
     from piwebkit.auth import Auth
     from piwebkit.hub import Hub
+    from piwebkit import tls as piwebkit_tls
     from piwebkit.maps import WEB as SHARED_WEB
     from piwebkit.maps import MapProxy
     from piwebkit.server import WebServer, lan_ip
@@ -69,13 +73,21 @@ def run(cfg, demo: bool, allowed: tuple[str, ...], demo_at: tuple[float, float] 
     cache = TileCache(config.TILES_DIR, max_bytes=cfg.map_cache_mb * 1024 * 1024) if cfg.map_cache else None
     proxy = MapProxy(cfg.nomad_url, cache, web=(WEB, SHARED_WEB))
     web = MeshWeb(hub, node, proxy, auth, cfg)
+    tls_dir = scratch / "tls" if demo else config.TLS_DIR
+    context = piwebkit_tls.context(tls_dir, "simplemesh") if tls else None
+    if tls and not context:
+        print("Could not make a certificate (is the openssl command installed?): serving plain http instead.", file=sys.stderr)
+    web.cert_file = tls_dir / "cert.pem" if context else None  # offered for download (Settings > Connection)
     try:
-        server = WebServer(cfg.web_port, web, allowed_hosts=allowed, banner="simplemesh\n")
+        server = WebServer(cfg.web_port, web, allowed_hosts=allowed, banner="simplemesh\n", tls=context)
     except OSError as e:
         print(f"Can't serve on port {cfg.web_port}: {e}", file=sys.stderr)
         return 1
     node.start()
-    print(f"simplemesh{' (demo)' if demo else ''}: http://{lan_ip()}:{server.port}/", flush=True)
+    print(f"simplemesh{' (demo)' if demo else ''}: http{'s' if context else ''}://{lan_ip()}:{server.port}/", flush=True)
+    if context:
+        print("The browser will warn about the certificate (this server made it for itself): continue past it, or install it from "
+              "Settings > Connection.", flush=True)
     print("Map server: " + (proxy.nomad or "none set (nodes are listed but there is no map)"), flush=True)
     if not auth.configured:
         print("No login yet: the first person to open the page creates it.", flush=True)
@@ -130,7 +142,7 @@ def main(argv: list[str] | None = None) -> None:
         cfg.save()
         print(f"Saved to {PATH}")
     demo_at = latlon(args.demo_at, "--demo-at") if args.demo_at else None
-    sys.exit(run(cfg, args.demo, tuple(args.allow_host), demo_at))
+    sys.exit(run(cfg, args.demo, tuple(args.allow_host), demo_at, tls=not args.http))
 
 
 if __name__ == "__main__":

@@ -485,3 +485,62 @@ def test_the_event_stream_starts_with_everything(web):
     c.close()
     kinds = [next(iter(e)) for e in seen]
     assert kinds[:6] == ["status", "self", "channels", "nodes", "msgs", "rxs"] and kinds[-1] == "sync"
+
+
+def test_the_app_files_are_there_for_installing_the_page(web):
+    for path in ("/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"):
+        assert call(web, "GET", path)[0] == 200, path  # the browser fetches these without the session cookie
+    st, manifest, _ = call(web, "GET", "/manifest.webmanifest")
+    assert manifest["name"] == "simplemesh" and manifest["display"] == "standalone"
+    cookie = login(web)
+    st, sw, _ = call(web, "GET", "/sw.js", cookie=cookie)
+    assert st == 200 and b"notificationclick" in sw
+    assert call(web, "GET", "/sw.js")[0] == 401
+
+
+def test_the_certificate_is_offered_only_when_there_is_one(web, tmp_path):
+    cookie = login(web)
+    assert call(web, "GET", "/api/certificate", cookie=cookie)[0] == 404  # served over plain http: nothing to install
+    pem = tmp_path / "cert.pem"
+    pem.write_text("-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n")
+    web.srv.web.cert_file = pem
+    st, body, hdr = call(web, "GET", "/api/certificate", cookie=cookie)
+    assert st == 200 and body.startswith(b"-----BEGIN CERTIFICATE-----")
+    assert ("Content-Type", "application/x-x509-ca-cert") in hdr and any("simplemesh.crt" in v for k, v in hdr if k == "Content-Disposition")
+    assert call(web, "GET", "/api/certificate")[0] == 401
+
+
+def test_served_over_https_with_a_certificate_to_install(tmp_path, monkeypatch):
+    import ssl
+    from piwebkit import tls
+    monkeypatch.setattr("simplemesh.config.PATH", tmp_path / "config.json")
+    r = Rig(tmp_path).connect()
+    ctx = tls.context(tmp_path / "tls", "simplemesh")
+    assert ctx
+    ui = MeshWeb(r.hub, r.node, MapProxy("", None, web=(WEB, SHARED_WEB)), Auth(tmp_path / "auth.json"), r.cfg)
+    ui.cert_file = tmp_path / "tls" / "cert.pem"
+    srv = WebServer(0, ui, tls=ctx)
+    try:
+        client = ssl.create_default_context(cafile=str(ui.cert_file))
+        client.check_hostname = False
+        c = http.client.HTTPSConnection("127.0.0.1", srv.port, context=client, timeout=5)
+        c.request("POST", "/api/setup", json.dumps({"username": "alice", "password": PW}), {"Content-Type": "application/json"})
+        resp = c.getresponse(); resp.read()
+        cookie = next(v for k, v in resp.getheaders() if k == "Set-Cookie")
+        assert resp.status == 200 and "; Secure" in cookie and cookie.startswith("simplemesh_session=")
+        c.close()
+        c = http.client.HTTPSConnection("127.0.0.1", srv.port, context=client, timeout=5)
+        c.request("GET", "/api/certificate", headers={"Cookie": cookie.split(";")[0]})
+        resp = c.getresponse()
+        assert resp.status == 200 and resp.read() == ui.cert_file.read_bytes()
+        c.close()
+        c = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=5)  # a plain request to the https port is sent on to https
+        c.request("GET", "/")
+        resp = c.getresponse(); resp.read()
+        assert resp.status == 308 and resp.getheader("Location").startswith("https://")
+        c.close()
+        assert b"CN = simplemesh" in __import__("subprocess").run(
+            ["openssl", "x509", "-noout", "-subject", "-in", str(ui.cert_file)], capture_output=True).stdout.replace(b"CN=", b"CN = ")
+    finally:
+        srv.stop()
+        r.node.stop()

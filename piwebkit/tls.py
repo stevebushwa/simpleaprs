@@ -43,8 +43,9 @@ def _fresh(cert: Path) -> bool:
         return True  # can't tell: keep what there is
 
 
-def ensure(folder: Path) -> tuple[Path, Path] | None:
-    """The certificate and key files in folder, made if they are missing or about to run out. None if openssl can't make them."""
+def ensure(folder: Path, name: str = "simpleaprs") -> tuple[Path, Path] | None:
+    """The certificate and key files in folder, made if they are missing or about to run out (name is what a device calls
+    the certificate when it is installed). None if openssl can't make them."""
     cert, key = folder / "cert.pem", folder / "key.pem"
     if key.is_file() and _fresh(cert):
         return cert, key
@@ -53,7 +54,7 @@ def ensure(folder: Path) -> tuple[Path, Path] | None:
     try:
         folder.mkdir(parents=True, exist_ok=True)
         subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
-                        "-keyout", str(key), "-out", str(cert), "-days", str(DAYS), "-subj", "/CN=simpleaprs",
+                        "-keyout", str(key), "-out", str(cert), "-days", str(DAYS), "-subj", f"/CN={name}",
                         "-addext", f"subjectAltName={san}", "-addext", "basicConstraints=critical,CA:TRUE"],
                        capture_output=True, check=True, timeout=60)
         key.chmod(0o600)
@@ -62,9 +63,9 @@ def ensure(folder: Path) -> tuple[Path, Path] | None:
     return cert, key
 
 
-def context(folder: Path) -> ssl.SSLContext | None:
+def context(folder: Path, name: str = "simpleaprs") -> ssl.SSLContext | None:
     """A server's TLS settings from the certificate in folder, or None if there isn't one to be had."""
-    files = ensure(folder)
+    files = ensure(folder, name)
     if not files:
         return None
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

@@ -222,7 +222,7 @@ the two apps never import each other, so either can be split out or run alone.
 
     pipx install '/path/to/simpleaprs[mesh]'     # or: pip install '.[mesh]'
     simplemesh --list-ports                      # the serial devices that could be the node
-    simplemesh                                   # http://raspberrypi.local:8074/
+    simplemesh                                   # https://raspberrypi.local:8074/ (--http for plain http)
     simplemesh --demo                            # no radio: a made-up mesh, to look at the page
 
 The node must run the **companion (USB serial)** firmware. The page has: a map of every node that has shared a position
@@ -243,13 +243,21 @@ A node in companion serial mode can't also talk to the phone app, so the page do
   release from GitHub, or from a `-merged.bin` file you pick when the machine has no internet. The page lets go of the
   serial port, runs esptool, and picks the node up again; it works even when the node's firmware isn't answering. nRF52
   boards (RAK4631, T114...) use a different bootloader and aren't handled.
+- **Settings > Alerts**: a card on the map, a chime, a vibration and a notification through the system for each message
+  that arrives (the Alerts button at the top turns them on; the choices are per browser). On a phone, install the page as
+  an app (Android: browser menu > Install app; iPhone: Share > Add to Home Screen) and the notifications come through the
+  phone's own. Nothing arrives while the page or app is closed: that would take push notifications from a server on the
+  internet.
 - **Repeaters, room servers and sensors** (click one on the map, then Manage): log in, status, neighbours, telemetry,
   access list, a command line, and room chat. Everything goes over the radio, so it takes seconds and fails out of range.
   Passwords are passed through, never stored.
 
 It has its own login (`~/.config/simplemesh/auth.json`; `--reset-login` forgets it), its own session cookie, and the same
-rules as the APRS page: plain HTTP for a LAN or VPN, and requests must be addressed to an IP, `localhost`, `*.local` or a
-one-word host name (`--allow-host` adds others). With nothing set it finds the node itself (the first USB serial device)
+rules as the APRS page: https with a certificate the server makes for itself (`~/.config/simplemesh/tls`; Settings >
+Connection downloads it to install on a device, which stops the browser's warning and allows notifications and installing
+the page as an app), for a LAN or VPN, and requests must be addressed to an IP, `localhost`, `*.local` or a
+one-word host name (`--allow-host` adds others). On a phone the panel under the map has a button in its tab bar that
+minimizes it to the tabs or opens it again; on a computer its edge is dragged to any width. With nothing set it finds the node itself (the first USB serial device)
 and uses a N.O.M.A.D. map server at `http://localhost:8080` (`--nomad-url`, or blank for no map; `--home LAT,LON` says
 where the map starts until something on it has a position; `--save` keeps the options). The Pi's own UART pins
 (`/dev/serial0`) are never guessed: pick that port in Settings or give `--serial-port`. Messages and nodes are kept in
