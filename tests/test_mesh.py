@@ -560,14 +560,12 @@ def test_the_event_stream_starts_with_everything(web):
 
 
 def test_the_app_files_are_there_for_installing_the_page(web):
-    for path in ("/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"):
+    for path in ("/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/sw.js"):
         assert call(web, "GET", path)[0] == 200, path  # the browser fetches these without the session cookie
     st, manifest, _ = call(web, "GET", "/manifest.webmanifest")
     assert manifest["name"] == "simplemesh" and manifest["display"] == "standalone"
-    cookie = login(web)
-    st, sw, _ = call(web, "GET", "/sw.js", cookie=cookie)
+    st, sw, _ = call(web, "GET", "/sw.js")
     assert st == 200 and b"notificationclick" in sw
-    assert call(web, "GET", "/sw.js")[0] == 401
 
 
 def test_the_certificate_is_offered_only_when_there_is_one(web, tmp_path):

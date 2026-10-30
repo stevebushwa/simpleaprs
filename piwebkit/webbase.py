@@ -21,7 +21,7 @@ from .hub import Hub
 from .maps import WEB, MapProxy
 
 
-ICON_FILES = ("/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/manifest.webmanifest")  # the login page shows them too
+ICON_FILES = ("/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/manifest.webmanifest", "/sw.js")  # the login page shows them too
 
 
 class BaseWebUI:

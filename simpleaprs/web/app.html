@@ -430,12 +430,13 @@
   const notifyProblem = () => !("Notification" in window) ? "this browser has no notifications"
     : !window.isSecureContext ? "browsers only allow notifications on https pages (or localhost)"
     : Notification.permission === "denied" ? "notifications are blocked for this site in the browser's settings" : "";
+  // Registered as the page loads, not when the first notification is shown: browsers want a service worker before they offer to install the page.
+  worker = ("serviceWorker" in navigator && window.isSecureContext)
+    ? navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).catch(() => null) : Promise.resolve(null);
   const notify = async (title, body, tag, force = false) => {
     if (!("Notification" in window) || Notification.permission !== "granted") return;
     if (!force && document.visibilityState === "visible" && document.hasFocus()) return;  // the card and chime are enough while it's in front
     const opts = {body, tag, vibrate: [200, 100, 200]};  // a tag of its own: two messages are two notifications, not one replacing the other
-    worker ??= ("serviceWorker" in navigator && window.isSecureContext)
-      ? navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).catch(() => null) : Promise.resolve(null);
     try { const reg = await worker; if (reg) await reg.showNotification(title, opts); else new Notification(title, opts); } catch {}
   };
   const setBell = on => {
@@ -464,15 +465,29 @@
     return {bulletin, via: via?.[1], from, body: m ? m[m.length - 1] : text,
             title: (bulletin ? `Bulletin ${m ? m[1] + " from " + m[2] : ""}` : `Message from ${from || "someone"}`).trim()};
   };
+  // One card for each sender (and one for bulletins): more from the same count up on the card it already has, rather than stacking new ones.
+  const cardFor = new Map();  // sender, or "bulletin" -> {card, n, d}; a card that was dismissed is no longer in the page
   const showCard = (d, t) => {
-    const card = mk("div", {className: "card" + (d.bulletin ? " bulletin" : "")});
+    const key = d.bulletin ? "\0bulletin" : d.from || "\0unknown", have = cardFor.get(key);
+    if (have && have.card.isConnected) {
+      have.n++; have.d = d;
+      const [title, time, body, via] = have.card.querySelectorAll("h4 span:first-child, h4 span:last-child, .body, .via");
+      title.textContent = d.bulletin ? `${have.n} new bulletins` : `${have.n} new messages from ${d.from || "someone"}`;
+      time.textContent = dated(t);
+      body.textContent = d.bulletin && d.from ? `${d.from}: ${d.body}` : d.body;  // the latest of them
+      via.textContent = d.via ? `via iGate ${d.via}` : ""; via.hidden = !d.via;
+      $("cards").prepend(have.card);
+      return;
+    }
+    const card = mk("div", {className: "card" + (d.bulletin ? " bulletin" : "")}), rec = {card, n: 1, d};
     const close = mk("button", {className: "ghost", textContent: "Dismiss", onclick: () => card.remove()});
     const actions = mk("div", {className: "actions"}, ...(d.bulletin || !d.from ? [] : [mk("button", {className: "act", textContent: "Reply", onclick: () => {
       document.querySelector("nav button[data-tab=messages]").click();
       $("mode").value = "message"; $("to").value = d.from; syncCompose(); $("text").focus(); card.remove();
     }})]), close);
     card.append(mk("h4", {}, mk("span", {textContent: d.title}), mk("span", {textContent: dated(t)})), mk("div", {className: "body", textContent: d.body}),
-                ...(d.via ? [mk("div", {className: "via", textContent: `via iGate ${d.via}`})] : []), actions);
+                mk("div", {className: "via", textContent: d.via ? `via iGate ${d.via}` : "", hidden: !d.via}), actions);
+    cardFor.set(key, rec);
     $("cards").prepend(card);
     while ($("cards").childElementCount > 5) $("cards").lastChild.remove();  // the rest are in the Messages tab
   };

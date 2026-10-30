@@ -32,6 +32,9 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--demo", action="store_true", help="no radio: a made-up mesh, to look at the page (nothing is saved)")
     ap.add_argument("--demo-at", metavar="LAT,LON", help="(with --demo) where the made-up mesh is (default: --home, else the middle of the US)")
     ap.add_argument("--http", action="store_true", help="serve plain http, not https (browsers only allow notifications and installing the page as an app on https)")
+    ap.add_argument("--cert-name", action="append", default=[], metavar="ADDR",
+                    help="also list this address or name in the https certificate (one the machine has on another network, "
+                         "such as its hotspot's); can be repeated; changing it makes a new certificate to install on devices again")
     ap.add_argument("--allow-host", action="append", default=[], metavar="NAME",
                     help="also accept requests addressed to this host name (the server refuses names that don't look like "
                          "a LAN machine); can be repeated")
@@ -74,7 +77,7 @@ def run(cfg, demo: bool, allowed: tuple[str, ...], demo_at: tuple[float, float] 
     proxy = MapProxy(cfg.nomad_url, cache, web=(WEB, SHARED_WEB))
     web = MeshWeb(hub, node, proxy, auth, cfg)
     tls_dir = scratch / "tls" if demo else config.TLS_DIR
-    context = piwebkit_tls.context(tls_dir, "simplemesh") if tls else None
+    context = piwebkit_tls.context(tls_dir, "simplemesh", cfg.cert_names) if tls else None
     if tls and not context:
         print("Could not make a certificate (is the openssl command installed?): serving plain http instead.", file=sys.stderr)
     web.cert_file = tls_dir / "cert.pem" if context else None  # offered for download (Settings > Connection)
@@ -134,6 +137,8 @@ def main(argv: list[str] | None = None) -> None:
     for opt, field in (("serial_port", "serial_port"), ("baud", "baud"), ("port", "web_port"), ("nomad_url", "nomad_url")):
         if getattr(args, opt) is not None:
             setattr(cfg, field, getattr(args, opt))
+    if args.cert_name:
+        cfg.cert_names = list(args.cert_name)
     if args.reset_login:
         from piwebkit.auth import Auth
         Auth(AUTH_PATH).reset()

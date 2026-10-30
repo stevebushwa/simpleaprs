@@ -147,3 +147,19 @@ def test_a_client_finds_whether_a_server_speaks_https(https):
         assert normalize(f"127.0.0.1:{plain.port}") == f"http://127.0.0.1:{plain.port}"
     finally:
         plain.stop()
+
+
+def test_the_certificate_lists_the_extra_addresses_asked_for(tmp_path):
+    import subprocess
+
+    def sans(cert):
+        return subprocess.run(["openssl", "x509", "-noout", "-ext", "subjectAltName", "-in", str(cert)], capture_output=True, text=True).stdout
+    cert, key = tls.ensure(tmp_path, "simplemesh", ("192.168.1.3", "pi.example.lan"))
+    assert "IP Address:192.168.1.3" in sans(cert) and "DNS:pi.example.lan" in sans(cert) and "DNS:localhost" in sans(cert)
+    assert "CN=simplemesh" in subprocess.run(["openssl", "x509", "-noout", "-subject", "-in", str(cert)], capture_output=True, text=True).stdout
+    mtime = cert.stat().st_mtime_ns
+    assert tls.ensure(tmp_path, "simplemesh", ("192.168.1.3",)) == (cert, key) and cert.stat().st_mtime_ns == mtime  # it already names them
+    assert tls.ensure(tmp_path, "simplemesh") == (cert, key) and cert.stat().st_mtime_ns == mtime  # none asked for: leave it be
+    tls.ensure(tmp_path, "simplemesh", ("192.168.1.4",))  # one it doesn't name: a new certificate
+    assert cert.stat().st_mtime_ns != mtime and "IP Address:192.168.1.4" in sans(cert)
+    assert tls.context(tmp_path, "simplemesh", ("10.0.0.9",))

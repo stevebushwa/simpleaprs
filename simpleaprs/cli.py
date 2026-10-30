@@ -49,6 +49,9 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     g.add_argument("--digipeater", choices=("off", "fill", "wide"),
                    help="repeat packets that ask for it: fill = WIDE1-1 only, wide = also WIDE2-1/WIDE2-2 (the radio transmits on its own)")
     g.add_argument("--no-tx", action="store_true", help="don't let the web page or clients transmit through this radio")
+    g.add_argument("--cert-name", action="append", default=[], metavar="ADDR",
+                   help="also list this address or name in the https certificate (one the machine has on another network, such "
+                        "as its hotspot's); can be repeated; changing it makes a new certificate to install on devices again")
     g.add_argument("--allow-host", action="append", default=[], metavar="NAME",
                    help="also accept requests addressed to this host name (the server refuses names that don't look like "
                         "a LAN machine); can be repeated")
@@ -73,6 +76,8 @@ def apply_overrides(cfg, args: argparse.Namespace) -> None:
         cfg.digi_enabled, cfg.digi_wide = args.digipeater != "off", args.digipeater == "wide"
     if args.no_tx:
         cfg.share_allow_tx = False
+    if args.cert_name:
+        cfg.cert_names = list(args.cert_name)
 
 
 def headless(args: argparse.Namespace) -> int:

@@ -168,7 +168,7 @@ class Server:
         self.hub.load(FRAMES_PATH)
         cache = tile_cache(c.map_cache_mb) if c.map_cache else None
         self.web = WebUI(self.web_hub, self.tracker, MapProxy(c.nomad_url, cache), c.share_allow_tx, self.auth, self)
-        tls = piwebkit_tls.context(TLS_DIR) if self.tls else None
+        tls = piwebkit_tls.context(TLS_DIR, extra=c.cert_names) if self.tls else None
         if self.tls and not tls:
             print("Could not make a certificate (is the openssl command installed?): serving plain http instead.", file=sys.stderr)
         self.secure = tls is not None

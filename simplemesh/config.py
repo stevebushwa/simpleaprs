@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 DIR = Path.home() / ".config" / "simplemesh"
@@ -28,6 +28,7 @@ class Config:
     auto_purge: bool = True  # take contacts off the node when its contact list is nearly full (they are kept here)
     purge_high: int = 90     # percent full that starts it...
     purge_low: int = 75      # ...and where it stops
+    cert_names: list = field(default_factory=list)  # more names or addresses the https certificate lists (e.g. the hotspot's)
 
     @classmethod
     def load(cls) -> "Config":

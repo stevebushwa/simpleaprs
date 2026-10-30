@@ -1,7 +1,9 @@
 {
   "name": "simplemesh",
   "short_name": "simplemesh",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#2b1d5c",
   "theme_color": "#2b1d5c",

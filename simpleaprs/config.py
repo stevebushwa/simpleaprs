@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 PATH = Path.home() / ".config" / "simpleaprs" / "config.json"
@@ -58,6 +58,7 @@ class Config:
     damaged_map: bool = False  # and put a station nobody decoded cleanly on the map, dimmed (all three off: ignore them)
     damaged_copies: int = 3  # damaged copies that must agree before a station nobody has decoded cleanly goes on the map
     damaged_radius_m: int = 150  # "the same spot" for those copies, and the most a damaged position may differ from a known one
+    cert_names: list = field(default_factory=list)  # more names or addresses the https certificate lists (e.g. the hotspot's)
 
     @classmethod
     def load(cls) -> "Config":

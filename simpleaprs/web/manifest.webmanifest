@@ -1,7 +1,9 @@
 {
   "name": "simpleaprs",
   "short_name": "simpleaprs",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#12324a",
   "theme_color": "#12324a",

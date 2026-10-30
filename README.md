@@ -174,7 +174,8 @@ Bulletins stay in the list between the folders.
 **It is https with a certificate it made for itself.** The first time, the browser warns that it can't vouch for the certificate:
 continue past the warning (the page is then a "secure context", which browsers require before they allow notifications). The
 certificate is made once with `openssl` and kept in `~/.config/simpleaprs/tls`; delete the folder to make a new one, or run
-with `--http` for plain http. Typing `http://` still works: it is sent on to `https://`. The encryption hides the traffic from
+with `--http` for plain http (`--cert-name ADDR`, repeatable, also lists an address or name the machine has on another network,
+such as its hotspot's, so one https address works everywhere; changing it makes a new certificate to install again). Typing `http://` still works: it is sent on to `https://`. The encryption hides the traffic from
 someone listening in, but without a certificate anyone trusts it doesn't prove who you are talking to, and the login only
 keeps other people on your network, and other web pages, out; keep the server on your LAN or a VPN such as Tailscale, never
 on the internet. If a phone's browser still refuses notifications because of the certificate, install it on the phone
@@ -265,7 +266,7 @@ A node in companion serial mode can't also talk to the phone app, so the page do
 It has its own login (`~/.config/simplemesh/auth.json`; `--reset-login` forgets it), its own session cookie, and the same
 rules as the APRS page: https with a certificate the server makes for itself (`~/.config/simplemesh/tls`; Settings >
 Connection downloads it to install on a device, which stops the browser's warning and allows notifications and installing
-the page as an app), for a LAN or VPN, and requests must be addressed to an IP, `localhost`, `*.local` or a
+the page as an app; `--cert-name` as for simpleaprs), for a LAN or VPN, and requests must be addressed to an IP, `localhost`, `*.local` or a
 one-word host name (`--allow-host` adds others). On a phone the panel under the map has a button in its tab bar that
 minimizes it to the tabs or opens it again; on a computer its edge is dragged to any width. With nothing set it finds the node itself (the first USB serial device)
 and uses a N.O.M.A.D. map server at `http://localhost:8080` (`--nomad-url`, or blank for no map; `--home LAT,LON` says

@@ -420,12 +420,13 @@ const chime = () => {
 const notifyProblem = () => !("Notification" in window) ? "this browser has no notifications"
   : !window.isSecureContext ? "browsers only allow notifications on https pages (or localhost)"
   : Notification.permission === "denied" ? "notifications are blocked for this site in the browser's settings" : "";
+// Registered as the page loads, not when the first notification is shown: browsers want a service worker before they offer to install the page.
+worker = ("serviceWorker" in navigator && window.isSecureContext)
+  ? navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).catch(() => null) : Promise.resolve(null);
 const notify = async (title, body, tag, force = false) => {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   if (!force && document.visibilityState === "visible" && document.hasFocus()) return;  // the card and chime are enough while it's in front
   const opts = {body, tag, icon: "/icon-192.png", vibrate: [200, 100, 200]};  // a tag of its own: two messages are two notifications, not one replacing the other
-  worker ??= ("serviceWorker" in navigator && window.isSecureContext)
-    ? navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).catch(() => null) : Promise.resolve(null);
   try { const reg = await worker; if (reg) await reg.showNotification(title, opts); else new Notification(title, opts); } catch {}
 };
 const setBell = on => {
@@ -453,15 +454,29 @@ const describe = m => m.kind === "chan"
   : {title: `Message from ${m.from || peerName(m.peer)}`, body: m.text};
 const onScreen = m => document.visibilityState === "visible" && document.hasFocus() && !main.classList.contains("shut")
   && currentTab() === (m.kind === "chan" ? "channels" : "direct") && view[m.kind === "chan" ? "chan" : "dm"] === convOf(m);
+// One card per conversation: more messages in it count up on the card it already has, rather than stacking new ones.
+const cardFor = new Map();  // conversation -> {card, n, m}; a card that was dismissed is no longer in the page
 const showCard = (m, d) => {
-  const card = mk("div", {className: "card"});
+  const key = convOf(m), have = cardFor.get(key);
+  if (have && have.card.isConnected) {
+    have.n++; have.m = m;
+    const [title, time, body] = have.card.querySelectorAll("h4 span:first-child, h4 span:last-child, .body");
+    title.textContent = `${have.n} new messages ` + (m.kind === "chan" ? "in " + chanName(m.chan) : "from " + (m.from || peerName(m.peer)));
+    time.textContent = stamp(now());
+    body.textContent = m.kind === "chan" ? `${m.from || "Someone"}: ${m.text}` : m.text;  // the latest of them
+    $("cards").prepend(have.card);
+    return;
+  }
+  const card = mk("div", {className: "card"}), rec = {card, n: 1, m};
   const reply = mk("button", {className: "act small", textContent: "Reply", onclick: () => {
+    const m = rec.m;
     if (m.kind === "chan") { view.chan = convOf(m); tabTo("channels"); touch("convs"); const i = $("chan-text"), tag = m.from ? `@[${m.from}] ` : ""; if (tag && !i.value.startsWith(tag)) i.value = tag + i.value; updateCounts(); i.focus(); }
     else openDm(m.peer);
     card.remove();
   }});
   card.append(mk("h4", {}, mk("span", {textContent: d.title}), mk("span", {textContent: stamp(now())})), mk("div", {className: "body", textContent: d.body}),
               mk("div", {className: "actions"}, reply, mk("button", {className: "ghost small", textContent: "Dismiss", onclick: () => card.remove()})));
+  cardFor.set(key, rec);
   $("cards").prepend(card);
   while ($("cards").childElementCount > 5) $("cards").lastChild.remove();  // the rest are in the conversations
 };
